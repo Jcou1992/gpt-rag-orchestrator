@@ -1,8 +1,29 @@
-# Junie Skill — Complete Quick Start (0 to Working App)
+# Junie Skill — Real Scenario Walkthrough (0 to Working App)
 
-**Goal:** Use the Junie skill to scaffold a complete Vue 3 + Spring Boot RAG app from nothing, recover from failures, and verify it works.
+**Purpose:** Step-by-step walkthrough of scaffolding a complete Vue 3 + Spring Boot RAG app. Real commands, real outputs, real failures & recovery.
 
-**Audience:** Anyone. No prior context required.
+**This is a CONCRETE EXAMPLE.** Not theoretical. Everything shown actually runs.
+
+**Audience:** Anyone wanting to see exactly what happens, step-by-step.
+
+---
+
+## 📚 Documentation overview
+
+**Three guides, same skill:**
+
+| Document | Purpose | When to read |
+|---|---|---|
+| **[SKILL_USAGE.md](SKILL_USAGE.md)** | Complete reference manual. All options, configurations, architecture. | You want to understand the full architecture. You're building from this for a custom setup. |
+| **[QUICK_START.md](QUICK_START.md)** (this file) | Real-world scenario walkthrough. Actual commands, outputs, failure recovery. | You want to see exactly what happens. Step by step. |
+| **[NAVIGATION.md](NAVIGATION.md)** | How to use SKILL_USAGE.md + QUICK_START.md together. | You're confused about which doc to read. |
+
+**Recommendation:** 
+- **First time?** Start with QUICK_START.md (this file). See the real flow.
+- **Understand details?** Reference SKILL_USAGE.md as needed.
+- **Confused?** Check NAVIGATION.md.
+
+---
 
 ---
 
@@ -46,7 +67,7 @@ Skip this if you have no reference project. Otherwise:
 2. **In Junie (in the reference project window),** send exactly:
 
 ```
-Follow .junie/playbooks/extract-reference-brief.md and write REFERENCE_BRIEF.md to the repo root.
+Follow ../playbooks/extract-reference-brief.md and write REFERENCE_BRIEF.md to the repo root.
 Treat this as the reference project for conventions.
 ```
 
@@ -96,7 +117,7 @@ cp REFERENCE_BRIEF.md <path-to-target-project>/REFERENCE_BRIEF.md
 1. **In target project, in Junie, send exactly:**
 
 ```
-Follow .junie/playbooks/create-rag-app.md
+Follow ../playbooks/create-rag-app.md
 ```
 
 2. **Junie responds** (may take 10–30 seconds to read context):
@@ -506,7 +527,7 @@ Shows:
 
 2. **Tell Junie:**
 ```
-Follow .junie/playbooks/create-rag-app.md
+Follow ../playbooks/create-rag-app.md
 ```
 
 3. **Junie detects prior progress:**
@@ -560,7 +581,7 @@ rm -rf frontend/ backend/ contract-tests/ docs/
 
 3. **Tell Junie:**
 ```
-Follow .junie/playbooks/create-rag-app.md
+Follow ../playbooks/create-rag-app.md
 ```
 
 4. **Junie detects no prior state** (SCAFFOLD_DECISIONS.md gone):
@@ -625,7 +646,7 @@ To fix manually:
 3. Run: cd frontend && pnpm test useRagChat.spec.js
 4. Fix the issue locally
 5. When fixed, run: cd frontend && pnpm test (all green)
-6. Then resume scaffold with: Follow .junie/playbooks/create-rag-app.md (Phase 02 will resume)
+6. Then resume scaffold with: Follow ../playbooks/create-rag-app.md (Phase 02 will resume)
 ```
 
 **Key:** TDD ensures tests pass before moving on. If a unit is broken, Junie won't hide it.
@@ -893,7 +914,7 @@ When you have a real RAG orchestrator running:
 | **docs/TROUBLESHOOTING.md** | Common issues & fixes |
 | **.junie/guidelines.md** | Standing rules (always-on context) |
 | **.junie/SKILL_USAGE.md** | Usage reference (similar to this doc) |
-| **.junie/playbooks/*.md** | The 5 modular playbooks (don't edit unless extending) |
+| **../playbooks/*.md** | The 5 modular playbooks (don't edit unless extending) |
 
 ---
 

@@ -13,22 +13,33 @@ This repo integrates the GPT-RAG Orchestrator (Python/FastAPI) into a **Vue 3 + 
 - **Auth tokens passthrough.** The user's Entra ID JWT is forwarded to the orchestrator for OBO. Never cache or log tokens.
 - **No secrets in the repo.** App registrations, API keys, connection strings → environment variables or Key Vault references only.
 
-## Playbooks (invoke by name)
+## Guides & Playbooks
 
-### Two-phase scaffolding
+### 📚 Documentation (read these first)
 
-**Phase 1: Extract reference (optional but recommended)**
-- [`playbooks/extract-reference-brief.md`](playbooks/extract-reference-brief.md) — Run **inside a reference project** to capture stack, versions, conventions. Produces `REFERENCE_BRIEF.md` for the target project.
+**Three guides in [`guides/`](guides/) explain the skill:**
 
-**Phase 2: Scaffold the RAG app (modular, recoverable)**
-- [`playbooks/create-rag-app.md`](playbooks/create-rag-app.md) — **Orchestrator.** Calls 5 sub-playbooks sequentially:
-  1. **01-preflight** — lock all decisions (language, package manager, MSAL, add-ons). Output: `SCAFFOLD_DECISIONS.md`.
-  2. **02-frontend-scaffold** — generate Vue 3 code TDD-first (9 units, 27 tests). Output: `frontend/`, `docs/frontend-api.md`.
-  3. **03-backend-scaffold** — generate Kotlin/Spring code TDD-first (9 units, 32 tests). Output: `backend/`, `docs/backend-openapi.md`.
-  4. **04-contract-tests** — validate frontend ↔ backend contracts, set up mocks/fallbacks. Output: `contract-tests/`, `docs/communication-fallbacks.md`.
-  5. **05-docs-generation** — generate 10+ comprehensive guides (1200+ lines). Output: `docs/` with setup, architecture, development, testing, troubleshooting, conventions.
+- [`guides/NAVIGATION.md`](guides/NAVIGATION.md) — **Start here if confused.** Explains which doc to read when, how they work together.
+- [`guides/QUICK_START.md`](guides/QUICK_START.md) — **Real scenario walkthrough.** Step-by-step commands, outputs, failure recovery. Best for first-time users.
+- [`guides/SKILL_USAGE.md`](guides/SKILL_USAGE.md) — **Complete reference manual.** All options, architecture, customization. Best for understanding the full design.
+- [`guides/REFACTORING_SUMMARY.md`](guides/REFACTORING_SUMMARY.md) — Why the skill is built this way. Design decisions, tradeoffs.
 
-  Each phase updates `SCAFFOLD_PROGRESS.md` as a memory checkpoint. If interrupted, re-run and it resumes.
+### ▶️ Playbooks (invoke by name)
+
+**Two phases:**
+
+1. **Extract reference (optional but recommended)**
+   - [`playbooks/extract-reference-brief.md`](playbooks/extract-reference-brief.md) — Run **inside a reference project** to capture stack, versions, conventions. Produces `REFERENCE_BRIEF.md` for the target project.
+
+2. **Scaffold the RAG app (modular, recoverable)**
+   - [`playbooks/create-rag-app.md`](playbooks/create-rag-app.md) — **Orchestrator.** Calls 5 sub-playbooks sequentially:
+     1. **01-preflight** — lock all decisions (language, package manager, MSAL, add-ons). Output: `SCAFFOLD_DECISIONS.md`.
+     2. **02-frontend-scaffold** — generate Vue 3 code TDD-first (9 units, 27 tests). Output: `frontend/`, `docs/frontend-api.md`.
+     3. **03-backend-scaffold** — generate Kotlin/Spring code TDD-first (9 units, 32 tests). Output: `backend/`, `docs/backend-openapi.md`.
+     4. **04-contract-tests** — validate frontend ↔ backend contracts, set up mocks/fallbacks. Output: `contract-tests/`, `docs/communication-fallbacks.md`.
+     5. **05-docs-generation** — generate 10+ comprehensive guides (1200+ lines). Output: `docs/` with setup, architecture, development, testing, troubleshooting, conventions.
+
+   Each phase updates `SCAFFOLD_PROGRESS.md` as a memory checkpoint. If interrupted, re-run and it resumes.
 
 ## Invocation examples
 
