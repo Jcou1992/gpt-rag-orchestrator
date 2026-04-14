@@ -15,8 +15,20 @@ This repo integrates the GPT-RAG Orchestrator (Python/FastAPI) into a **Vue 3 + 
 
 ## Playbooks (invoke by name)
 
-- [`playbooks/extract-reference-brief.md`](playbooks/extract-reference-brief.md) — Run this **inside a reference project** to produce a `REFERENCE_BRIEF.md` summarizing its stack, conventions, and standards. Copy that file into this repo before scaffolding.
-- [`playbooks/create-rag-app.md`](playbooks/create-rag-app.md) — Scaffolds the full `frontend/` + `backend/` trees from [INTEGRATION_PLAN.md](../INTEGRATION_PLAN.md), honoring `REFERENCE_BRIEF.md` if present. TDD-first. Interactive.
+### Two-phase scaffolding
+
+**Phase 1: Extract reference (optional but recommended)**
+- [`playbooks/extract-reference-brief.md`](playbooks/extract-reference-brief.md) — Run **inside a reference project** to capture stack, versions, conventions. Produces `REFERENCE_BRIEF.md` for the target project.
+
+**Phase 2: Scaffold the RAG app (modular, recoverable)**
+- [`playbooks/create-rag-app.md`](playbooks/create-rag-app.md) — **Orchestrator.** Calls 5 sub-playbooks sequentially:
+  1. **01-preflight** — lock all decisions (language, package manager, MSAL, add-ons). Output: `SCAFFOLD_DECISIONS.md`.
+  2. **02-frontend-scaffold** — generate Vue 3 code TDD-first (9 units, 27 tests). Output: `frontend/`, `docs/frontend-api.md`.
+  3. **03-backend-scaffold** — generate Kotlin/Spring code TDD-first (9 units, 32 tests). Output: `backend/`, `docs/backend-openapi.md`.
+  4. **04-contract-tests** — validate frontend ↔ backend contracts, set up mocks/fallbacks. Output: `contract-tests/`, `docs/communication-fallbacks.md`.
+  5. **05-docs-generation** — generate 10+ comprehensive guides (1200+ lines). Output: `docs/` with setup, architecture, development, testing, troubleshooting, conventions.
+
+  Each phase updates `SCAFFOLD_PROGRESS.md` as a memory checkpoint. If interrupted, re-run and it resumes.
 
 ## Invocation examples
 

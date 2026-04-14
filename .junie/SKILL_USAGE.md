@@ -4,6 +4,16 @@ A two-phase Junie skill that scaffolds the Vue 3 + Spring Boot app described in 
 
 ---
 
+## 🚀 Quick start?
+
+If you want to **get from 0 to working app**, follow [QUICK_START.md](QUICK_START.md) instead. It's a step-by-step walkthrough with real commands, expected outputs, and recovery scenarios.
+
+This guide is a reference for the full architecture. **QUICK_START.md is the executable guide.**
+
+---
+
+---
+
 ## What the skill contains
 
 | File | Role |
@@ -22,9 +32,9 @@ A two-phase Junie skill that scaffolds the Vue 3 + Spring Boot app described in 
 
 ---
 
-## Two-phase usage
+## Three-step workflow
 
-### Phase 1 — Extract the reference brief
+### Step 1 — Extract the reference brief (optional, ~5 minutes)
 
 Purpose: capture the stack, versions, and conventions of a project you want to stay consistent with.
 
@@ -42,9 +52,11 @@ Purpose: capture the stack, versions, and conventions of a project you want to s
    cp <reference-project>/REFERENCE_BRIEF.md <this-repo>/REFERENCE_BRIEF.md
    ```
 
-Skip this phase only if you have no reference project. You'll get plan defaults (Vue 3.5, Vuetify 3.7, Vite 5, **JavaScript** frontend, Spring Boot 3.3, Kotlin 1.9, JDK 21, pnpm).
+Skip this step only if you have no reference project. You'll use plan defaults (Vue 3.5, Vuetify 3.7, Vite 5, **JavaScript** frontend, Spring Boot 3.3, Kotlin 1.9, JDK 21, pnpm).
 
-### Phase 2 — Scaffold the app
+### Step 2 — Scaffold the app (modular, ~30 minutes total)
+
+This step runs 5 phases sequentially. Each phase is self-contained and can be resumed if interrupted.
 
 1. Open **this repo** in your JetBrains IDE.
 2. Confirm these files exist:
@@ -70,13 +82,37 @@ Skip this phase only if you have no reference project. You'll get plan defaults 
    | H | Frontend language: **JavaScript** (default, carried from Vue 2 codebase) or TypeScript |
    | I | Optional add-ons: vue-router, vue-i18n, Playwright, Storybook, Testcontainers, MCP server |
 
-5. Junie writes `SCAFFOLD_DECISIONS.md` capturing your answers, then runs a strict **TDD loop** per unit: red → green → refactor → commit. You'll see failing tests before any implementation appears.
+5. Junie locks decisions in `SCAFFOLD_DECISIONS.md`, then runs **Phase 01 (Preflight) ✅ done**.
 
-6. When done, Junie prints:
-   - All created file paths (grouped by frontend / backend / root)
-   - Green test counts per layer
-   - Any TODOs you explicitly deferred
-   - The next suggested phase from [INTEGRATION_PLAN.md §8](../INTEGRATION_PLAN.md)
+6. **Phase 02 (Frontend-Scaffold):** Junie generates `frontend/` with a TDD loop (9 units, red → green per unit, 27 tests total). You'll see failing tests before implementation. Takes ~10 minutes.
+
+7. **Phase 03 (Backend-Scaffold):** Junie generates `backend/` with TDD loop (9 units, 32 tests). Takes ~10 minutes.
+
+8. **Phase 04 (Contract-Tests):** Junie generates JSON-schema contracts, mocks, fallback docs, cross-layer tests. Takes ~3 minutes.
+
+9. **Phase 05 (Docs-Generation):** Junie generates 10+ comprehensive guides (1200+ lines) covering setup, architecture, development, testing, troubleshooting, naming conventions. Takes ~5 minutes.
+
+10. When all phases are done, Junie prints:
+    - ✅ Summary: 59+ tests passed, 1200+ lines of docs
+    - 📂 File counts (frontend, backend, contract-tests, docs)
+    - 🚀 Next steps (how to run locally, integrate real orchestrator)
+    - 🔗 Key resources (INTEGRATION_PLAN.md, docs/README.md, troubleshooting)
+
+---
+
+## Live progress tracking
+
+Throughout the scaffold, Junie updates **`SCAFFOLD_PROGRESS.md`** as a memory checkpoint:
+- Phase status (✅ DONE / ⏳ PENDING)
+- Test counts per unit
+- What's next
+- Any blockers or notes
+
+If Junie is interrupted mid-phase:
+- Restart: "Follow .junie/playbooks/create-rag-app.md"
+- Junie detects `SCAFFOLD_PROGRESS.md` and asks: "Resume from Phase X?"
+- Resumes without re-running completed phases
+- No lost work
 
 ---
 

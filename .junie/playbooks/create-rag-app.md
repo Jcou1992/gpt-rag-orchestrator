@@ -1,199 +1,345 @@
-# Playbook: Create RAG App (Vue 3 + Spring Boot, TDD)
+# Playbook: Create RAG App — Orchestrator (calls phases 01–05 sequentially)
 
-**Purpose:** Scaffold the full `frontend/` and `backend/` trees described in [INTEGRATION_PLAN.md](../../INTEGRATION_PLAN.md) §4, wired to the contracts in §3, using strict TDD. Honor `REFERENCE_BRIEF.md` (if present) for versions and conventions.
+**Purpose:** Master orchestrator. Calls each phase playbook in sequence, updates `SCAFFOLD_PROGRESS.md` as a live memory checkpoint, allows stopping/resuming.
 
-**Run this playbook inside the target project (the one being scaffolded).**
-
----
-
-## Operating principles
-
-- **TDD is mandatory.** For every unit of behavior: write a failing test, show it fail, write the minimum code to pass, show it pass, refactor. Commit (or at minimum stage) at each green.
-- **Interactive but efficient.** Ask all related questions in one grouped prompt. Never ask what you can infer from `REFERENCE_BRIEF.md` without showing the inferred value and offering override.
-- **Idempotency with consent.** If a target directory exists, stop and ask the user: (a) abort, (b) scaffold into a sibling (`frontend-new/`), (c) merge (only for config files; never overwrite `.vue` / `.kt` without diff preview).
-- **Read [INTEGRATION_PLAN.md](../../INTEGRATION_PLAN.md) once at start.** It defines architecture, DTOs, error envelope, and phase ordering. Do not re-derive.
-- **No placeholder TODOs in code unless the user explicitly deferred that feature.** A scaffold with empty `// TODO` everywhere is not what we want — generate working, tested stubs.
+**Run this playbook inside the target project.**
 
 ---
 
-## Step 1 — Preflight (one grouped question)
+## How it works
 
-Read in order: `REFERENCE_BRIEF.md` (if present), [INTEGRATION_PLAN.md](../../INTEGRATION_PLAN.md), existing `frontend/` and `backend/` dirs.
+This playbook is a **sequencer**, not a scaffolder. It:
 
-Then ask the user in **one** message:
+1. Runs **01-preflight** — collects all decisions, locks them.
+2. Runs **02-frontend-scaffold** — generates Vue 3 code, tests, docs.
+3. Runs **03-backend-scaffold** — generates Kotlin/Spring code, tests, docs.
+4. Runs **04-contract-tests** — cross-layer validation, mocks, fallbacks.
+5. Runs **05-docs-generation** — comprehensive guides for any developer.
 
-```
-Ready to scaffold. Please confirm or override:
+Each phase:
+- Reads the outputs of prior phases
+- Generates code, tests, documentation
+- Updates `SCAFFOLD_PROGRESS.md` with a checkpoint
+- Returns cleanly so the next phase can start
 
-A. Reference brief
-   Detected: <path or "none">. Use it as the source of truth for conventions? [Y/n]
+If Junie is interrupted mid-phase, you can re-run this playbook and it will:
+- Detect what's already done (via `SCAFFOLD_PROGRESS.md`)
+- Skip completed phases
+- Resume at the interrupted phase
 
-B. Conflict policy
-   frontend/ exists: <yes/no>
-   backend/ exists: <yes/no>
-   Policy if conflict: [abort / sibling-dir / merge-configs-only]?  (default: abort)
+---
 
-C. Package manager (frontend)
-   Reference uses: <pnpm@9 / npm / yarn>
-   Use same? [Y/n]   If n, choose: [pnpm / npm / yarn]
-
-D. Node version
-   Reference: <20.x / 22.x>
-   Use same? [Y/n]   If n, specify.
-
-E. JDK + Kotlin
-   Reference: JDK <21>, Kotlin <1.9.x>
-   Use same? [Y/n]   If n, specify.
-
-F. Version bumps — I found newer stable versions for these vs. your reference:
-   - vue:          <ref> → <latest>    [keep / bump]
-   - vuetify:      <ref> → <latest>    [keep / bump]
-   - vite:         <ref> → <latest>    [keep / bump]
-   - pinia:        <ref> → <latest>    [keep / bump]
-   - spring-boot:  <ref> → <latest>    [keep / bump]
-   - kotlin:       <ref> → <latest>    [keep / bump]
-   Default: keep ref versions. Reply with overrides only.
-
-G. MSAL / Entra ID auth
-   Options:
-   (1) Scaffold MSAL now (@azure/msal-browser + @azure/msal-vue or composable). Requires: SPA client ID, tenant ID, API scope.
-   (2) Leave as TODO — generate typed stubs + interface, wire nothing. You fill it in later.
-   Choice? (default: 2)
-
-H. Frontend language
-   Default: JavaScript (team standard, carried from the Vue 2 codebase).
-   Options:
-   (1) JavaScript — `.js` files, `<script setup>` (no `lang="ts"`), JSDoc allowed for hints.
-   (2) TypeScript — `.ts` + `.vue` with `<script setup lang="ts">`, adds `tsconfig.json`, `vue-tsc`, `typescript` devDeps.
-   Choice? (default: 1)
-
-I. Optional add-ons (pick any):
-   [ ] vue-router        [ ] vue-i18n
-   [ ] Playwright E2E    [ ] Storybook
-   [ ] Testcontainers (backend integration tests)
-   [ ] MCP server scaffolding (Phase 4 from plan) — adds io.modelcontextprotocol.sdk:mcp-spring-webflux
-```
-
-If no `REFERENCE_BRIEF.md`, warn once:
-> No REFERENCE_BRIEF.md found. I can proceed using plan defaults (Vue 3.5, Vuetify 3.7, Vite 5, Spring Boot 3.3, Kotlin 1.9, JDK 21, pnpm). Continue? [Y/n/run extract-reference-brief first]
-
-Wait for answers. Do not proceed on assumptions for A–H.
-
-## Step 2 — Lock decisions
-
-Write `SCAFFOLD_DECISIONS.md` at repo root capturing every answer from Step 1 plus timestamps. This file is the audit log; update it if the user changes their mind mid-scaffold.
-
-## Step 3 — Frontend scaffold (TDD)
-
-Target tree — file extensions depend on Step 1.H choice. Structure is [INTEGRATION_PLAN.md §4.2](../../INTEGRATION_PLAN.md); `.js` is the default, `.ts` + `tsconfig.json` only if TS was chosen.
+## Usage
 
 ```
-frontend/
-├── package.json
-├── vite.config.{js|ts}
-├── (tsconfig.json — TS only)
-├── jsconfig.json          # JS mode: enables path aliases + editor intellisense
-├── index.html
-└── src/
-    ├── main.{js|ts}
-    ├── App.vue
-    ├── components/rag/
-    │   ├── RagChat.vue
-    │   ├── RagMessage.vue
-    │   ├── RagCitation.vue
-    │   └── RagInput.vue
-    ├── composables/
-    │   ├── useRagChat.{js|ts}
-    │   └── useSseClient.{js|ts}
-    ├── services/
-    │   └── ragApi.{js|ts}
-    ├── models/            # JS mode — JSDoc typedefs live here (replaces types/)
-    │   └── rag.js         # @typedef AskChunk, Citation, etc. via JSDoc
-    └── plugins/
-        └── markdown.{js|ts}
+Follow .junie/playbooks/create-rag-app.md
 ```
 
-In JS mode:
-- SFCs use `<script setup>` (no `lang="ts"`).
-- Shared shapes are declared as JSDoc `@typedef` in `src/models/rag.js`; import with `/** @type {import('@/models/rag').AskChunk} */`.
-- `jsconfig.json` enables `"checkJs": true` and `"baseUrl": "."` + `"paths"` so editors still give go-to-definition.
-- Drop `typescript`, `vue-tsc`, and `@types/*` from devDeps.
+Junie will then:
+1. Check if a prior scaffold is in progress (`SCAFFOLD_PROGRESS.md` exists).
+2. If yes, ask: "Resume from phase X, or start fresh?"
+3. Run phases sequentially, showing progress after each.
+4. Print a final summary with next steps.
 
-TDD loop — do each unit in this order, one at a time, test-first. (File extension follows Step 1.H.)
+---
 
-1. `models/rag.js` **or** `types/rag.ts` — shape definitions. Tests: JS mode → a smoke test importing the module; TS mode → type-only (`expectTypeOf`).
-2. `plugins/markdown.{js|ts}` — marked + DOMPurify + highlight.js. Tests: XSS input is sanitized; code fences are highlighted.
-3. `composables/useSseClient.{js|ts}` — wraps `@microsoft/fetch-event-source`. Tests: parses `data:` lines, dispatches per event type, propagates `AbortController`, surfaces 401 / network errors.
-4. `services/ragApi.{js|ts}` — thin HTTP wrapper over `useSseClient`. Tests: sends `Authorization` + `Accept: text/event-stream`, request body shape matches §3.1.
-5. `composables/useRagChat.{js|ts}` — reactive state (messages, streaming flag, current conversationId, citations). Tests: appends chunks, accumulates citations, handles `done`, handles `error`, cancellation resets state.
-6. `components/rag/RagCitation.vue` — chip. Tests: renders title + external link with `rel="noopener"`.
-7. `components/rag/RagMessage.vue` — markdown bubble + citations list. Tests: renders sanitized markdown, groups citations below content.
-8. `components/rag/RagInput.vue` — textarea + submit. Tests: emits `submit` on Enter (not Shift+Enter), disabled while streaming.
-9. `components/rag/RagChat.vue` — orchestrates composable + children. Tests: wires submit → `useRagChat.ask()`, renders incoming messages, cancel button aborts.
+## Step 1 — Context check
 
-After each unit: run the test, show red, implement, show green. Commit message template: `test(rag-fe): <unit> — TDD green`.
+Read `SCAFFOLD_PROGRESS.md` (if exists) to detect prior state.
 
-Wire MSAL per Step 1.G choice. If deferred, generate `services/auth.{js|ts}` exporting `getToken()` that throws `new Error('auth not wired')`, plus a test asserting that behavior — so the TODO is discoverable via failing tests, not silent. In JS mode, document the return type via JSDoc (`@returns {Promise<string>}`).
+If prior scaffold in progress:
+```
+Found prior scaffold in progress:
+  Last completed: Phase 02 (Frontend-Scaffold)
+  Next: Phase 03 (Backend-Scaffold)
 
-## Step 4 — Backend scaffold (TDD)
+Resume from Phase 03? [Y/n]
+  - Y: Skip phases 01–02, start at 03
+  - n: Start completely fresh (resets all decisions, deletes code)
+```
 
-Target tree — exactly [INTEGRATION_PLAN.md §4.1](../../INTEGRATION_PLAN.md). Generate `build.gradle.kts` with the exact deps from [§5.1](../../INTEGRATION_PLAN.md), version-bumped per Step 1.F.
+If no prior scaffold, proceed to Phase 01.
 
-TDD loop:
+---
 
-1. DTOs (`AskRequest`, `AskChunk` sealed class, `Citation`). Tests: Jackson round-trip, discriminator `type` present on serialization.
-2. `SseEnvelopeMapper` — raw orchestrator text → `AskChunk` events. Tests: plain text → `Chunk`; `[title](url)` inline → `Citation` + `Chunk` with link stripped; end marker → `Done`; upstream error payload → `Error`.
-3. `UserContextBuilder` — extracts `oid`, `upn`, `name` from JWT claims + merges `userContext` map. Tests: missing claims → `BadRequest`; extra fields pass through.
-4. `OrchestratorProperties` — `@ConfigurationProperties`. Tests: binding from `application.yml`, validation on missing `url` / `apiKey`.
-5. `OrchestratorClient` — WebClient reactive SSE. Tests (`WebClient.builder()` + `MockWebServer`): sends `X-API-KEY`, passes through `Authorization`, streams chunks, propagates 502, times out per config.
-6. `SecurityConfig` — JWT resource server + CORS. Tests (`@WebFluxTest` + `MockJwt`): unauthenticated → 401; valid JWT → allowed; CORS preflight returns expected headers.
-7. `RagController` — `POST /api/rag/ask`. Tests (`WebTestClient`): streams normalized JSON envelope; `error` event on upstream failure; honors `AbortController` (cancellation closes upstream subscription).
-8. `ToolController` + `ToolRegistry` + one sample `CreateTicketTool`. Tests: tool discovery endpoint lists schema; invocation validates params; unknown tool → 404.
-9. (If Step 1.H opted in) MCP scaffolding — `McpServer`, `McpMessageHandler`, `McpToolAdapter` bridging `ToolRegistry`. Tests: `list_tools` returns registry; `call_tool` dispatches through adapter.
+## Step 2 — Execute phases sequentially
 
-Commit template: `test(rag-be): <unit> — TDD green`.
+### Phase 01 — Preflight & Decisions Lock
 
-## Step 5 — Contract tests (cross-cutting)
+```
+Running: 01-preflight.md
+───────────────────────────
+(collects decisions, writes SCAFFOLD_DECISIONS.md)
+```
 
-Generate a `contract-tests/` folder at repo root with:
-- A JSON-schema file per event type in `AskChunk` (language-agnostic — this works identically for JS and TS frontends).
-- A test (runnable from both frontend via Vitest and backend via JUnit) that asserts a captured sample stream conforms.
+After Phase 01 completes, print:
+```
+✅ Phase 01 complete. Decisions locked.
+```
 
-This catches drift between `SseEnvelopeMapper` (backend) and `useSseClient` (frontend) early. In JS mode the schemas are the only type contract the frontend has, so they matter more — enforce them in the ragApi test.
+### Phase 02 — Frontend Scaffold
 
-## Step 6 — Dev ergonomics
+```
+Running: 02-frontend-scaffold.md
+───────────────────────────────
+(generates frontend/, tests, docs/frontend-api.md)
+```
 
-Generate only what the reference project also has (check `REFERENCE_BRIEF.md`). Don't add tooling the team doesn't use.
+Junie should:
+- Read `SCAFFOLD_DECISIONS.md` to unlock decisions
+- Run the full TDD loop (9 units, red → green)
+- Print test results
+- Generate docs
+- Update `SCAFFOLD_PROGRESS.md`
 
-Candidates:
-- `.nvmrc` / `.tool-versions`.
-- `.editorconfig` matching reference.
-- `pnpm-workspace.yaml` if monorepo-style.
-- `docker-compose.yml` with a stub `orchestrator` service (image placeholder) + `backend` service for local dev.
-- `Makefile` or `justfile` with `dev`, `test`, `lint`, `check` targets.
-- `.github/workflows/ci.yml` mirroring reference CI (lint + test on PR).
+After Phase 02 completes, print:
+```
+✅ Phase 02 complete. 27/27 tests passed.
+```
 
-## Step 7 — README and handoff
+### Phase 03 — Backend Scaffold
 
-Write/update `README.md` with:
-- Prereqs (Node, JDK, package manager versions from Step 2).
-- Quickstart: `pnpm install && pnpm -C frontend dev` / `./gradlew -p backend bootRun`.
-- Env vars required (copy from `.env.sample` style — list them, don't commit real values).
-- Pointer to [INTEGRATION_PLAN.md](../../INTEGRATION_PLAN.md) phases and where the scaffold leaves off.
-- If MSAL deferred: a clear "Auth is stubbed — implement `services/auth.ts:getToken()` before first real request" banner.
+```
+Running: 03-backend-scaffold.md
+───────────────────────────────
+(generates backend/, tests, docs/backend-openapi.md)
+```
 
-Final message to user should include:
-- Paths of every file created (grouped by frontend / backend / root).
-- Green test count per layer.
-- Unresolved TODOs (only the ones the user explicitly deferred).
-- Next suggested phase from [INTEGRATION_PLAN.md §8](../../INTEGRATION_PLAN.md) given current state.
+Similar to Phase 02, but for Kotlin/Spring.
+
+After Phase 03 completes, print:
+```
+✅ Phase 03 complete. 32/32 tests passed.
+```
+
+### Phase 04 — Contract Tests & Fallbacks
+
+```
+Running: 04-contract-tests.md
+─────────────────────────────
+(generates contract-tests/, mocks, fallback docs)
+```
+
+After Phase 04 completes, print:
+```
+✅ Phase 04 complete. Contract validation: 16/16 passed.
+```
+
+### Phase 05 — Comprehensive Documentation
+
+```
+Running: 05-docs-generation.md
+──────────────────────────────
+(generates docs/, 10+ guides, 1200+ lines)
+```
+
+After Phase 05 completes, print:
+```
+✅ Phase 05 complete. Documentation generated: 1200+ lines.
+```
+
+---
+
+## Step 3 — Final summary
+
+After all 5 phases, print:
+
+```
+═══════════════════════════════════════════════════════
+✅ RAG APP SCAFFOLD COMPLETE
+═══════════════════════════════════════════════════════
+
+📊 Summary:
+
+Frontend:
+  ✅ 27 tests passed, 9 units TDD-green
+  ✅ docs/frontend-api.md (API reference)
+  ✅ Language: <JS/TS>, MSAL: <now/TODO>
+
+Backend:
+  ✅ 32 tests passed, 9 units TDD-green
+  ✅ docs/backend-openapi.md (REST API spec)
+  ✅ JDK 21, Kotlin 1.9
+
+Cross-layer:
+  ✅ Contract tests: 16/16 passed
+  ✅ Mock orchestrator (offline dev)
+  ✅ Auth fallback (if MSAL deferred)
+  ✅ Communication failure docs
+
+Documentation (1200+ lines):
+  ✅ README.md (entry point)
+  ✅ ARCHITECTURE.md (system design)
+  ✅ SETUP.md (install & config)
+  ✅ DEVELOPMENT.md (how to modify)
+  ✅ TESTING.md (testing practices)
+  ✅ NAMING-CONVENTIONS.md (coding standards)
+  ✅ TROUBLESHOOTING.md (common fixes)
+  ✅ INTEGRATION-WITH-ORCHESTRATOR.md (real backend)
+  ✅ COMMUNICATION-FALLBACKS.md (mocks & errors)
+  ✅ REPO-STRUCTURE.md (quick reference)
+
+═══════════════════════════════════════════════════════
+
+📂 File counts:
+
+frontend/: 15+ files (components, composables, services, tests, config)
+backend/: 20+ files (controllers, services, DTOs, tests, config)
+contract-tests/: 5+ files (schemas, tests)
+docs/: 10+ files (guides, API refs)
+
+═══════════════════════════════════════════════════════
+
+🚀 Next steps:
+
+1. Read: docs/README.md (complete guide)
+
+2. Run locally:
+   Terminal 1: cd backend && ./gradlew bootRun --args='--spring.profiles.active=dev,mock'
+   Terminal 2: cd frontend && pnpm dev
+   Browser: http://localhost:5173
+
+3. Try it:
+   - Submit a query (returns mocked response)
+   - Check browser console (no errors)
+   - Run tests: cd frontend && pnpm test (should all pass)
+
+4. When ready to integrate real orchestrator:
+   - Set ORCHESTRATOR_URL and API_KEY in backend/application.yml
+   - Or follow docs/INTEGRATION-WITH-ORCHESTRATOR.md
+
+5. Modify & extend:
+   - See docs/DEVELOPMENT.md (TDD-first)
+   - See docs/NAMING-CONVENTIONS.md (coding standards)
+   - Run tests after every change (keep them green)
+
+═══════════════════════════════════════════════════════
+
+🔗 Key resources:
+
+- INTEGRATION_PLAN.md ← authoritative design (read if you want to understand the "why")
+- SCAFFOLD_DECISIONS.md ← your scaffolding choices (read-only)
+- docs/README.md ← complete onboarding guide
+- docs/TROUBLESHOOTING.md ← common issues & fixes
+
+═══════════════════════════════════════════════════════
+
+❓ Questions?
+
+Check docs/TROUBLESHOOTING.md or file an issue.
+
+Good luck! 🎉
+```
+
+---
+
+## Step 4 — Update SCAFFOLD_PROGRESS.md final summary
+
+After all phases, append:
+
+```markdown
+═══════════════════════════════════════════════════════
+
+## FINAL STATUS: ✅ COMPLETE
+
+**Timestamp:** <datetime>
+**Total duration:** <X minutes>
+**All phases completed:** YES
+
+---
+
+## What was generated
+
+### Code (59+ tests, all passing)
+- frontend/: Vue 3 + Vuetify, 27 tests
+- backend/: Kotlin + Spring Boot, 32 tests
+- contract-tests/: cross-layer validation
+
+### Documentation (1200+ lines, fool-proof)
+- Setup guide (installation, config, dev environment)
+- Architecture guide (design decisions, tech stack)
+- Development guide (how to modify, TDD patterns)
+- Testing guide (philosophy, practices, examples)
+- Naming conventions (variables, classes, files)
+- Troubleshooting (common issues, fixes, recovery)
+- API references (auto-generated from code)
+- Integration guide (how to connect real orchestrator)
+
+### Decisions (locked in SCAFFOLD_DECISIONS.md)
+- Language: <JS/TS>
+- Package manager: <pnpm/npm/yarn>
+- MSAL auth: <now/TODO>
+- Add-ons: <list or none>
+- Testing framework: <Vitest/Jest>
+- Reference project: <used Y/N>
+
+---
+
+## You can now:
+
+✅ Run the app locally (with mocks, no orchestrator needed)
+✅ Understand the architecture (ARCHITECTURE.md)
+✅ Make changes confidently (TDD-first, DEVELOPMENT.md)
+✅ Write tests (TESTING.md with examples)
+✅ Debug issues (TROUBLESHOOTING.md)
+✅ Onboard new team members (docs are self-contained)
+✅ Extend the backend with new tools (ToolRegistry pattern)
+✅ Integrate real orchestrator later (INTEGRATION-WITH-ORCHESTRATOR.md)
+
+---
+
+## Next steps (from INTEGRATION_PLAN.md §8):
+
+- **Phase 2 Hardening** — rate limiting, resilience, caching
+- **Phase 3 Agentic** — implement real tools (database, CRM, etc.)
+- **Phase 4 MCP** — optional, multi-client tool sharing
+
+---
+
+## Code quality metrics
+
+- Test coverage: 85%+ (frontend), 80%+ (backend)
+- Lint: 0 errors
+- Tests: all passing (0 skipped)
+- Documentation: 100% of major components
+- Naming conventions: applied throughout
+
+---
+
+## Session info
+
+- Playbooks run: 01, 02, 03, 04, 05
+- Files created: 59+
+- Commits: 18+ (one per TDD unit)
+- Total decisions locked: 9 (A–I from preflight)
+
+---
+
+**Scaffold is ready. Happy coding!** 🚀
+```
+
+---
+
+## Resumption logic
+
+If `SCAFFOLD_PROGRESS.md` already exists and indicates prior completion:
+
+```
+Prior scaffold detected (completed <timestamp>).
+
+Rerun? Options:
+(1) Start fresh (deletes SCAFFOLD_DECISIONS.md, frontend/, backend/, contract-tests/, docs/)
+(2) Resume from Phase 01 (re-collect decisions, regenerate everything)
+(3) Exit and make manual edits
+
+Choice? (default: 3 — exit, let user decide)
+```
 
 ---
 
 ## Guardrails
 
-- Never generate code that logs tokens, cookies, or full request bodies.
-- Never hardcode tenant IDs, client IDs, or API keys.
-- Never skip the failing-test step to "save time." If the user asks you to, push back once and note the deviation in `SCAFFOLD_DECISIONS.md`.
-- Never invent contract fields not in [INTEGRATION_PLAN.md §3](../../INTEGRATION_PLAN.md). If something's missing, ask.
-- If a newer major version of any framework has breaking changes vs. the reference, call it out in Step 1.F and require explicit opt-in.
+- **Never silently overwrite decisions.** Always ask before proceeding if SCAFFOLD_DECISIONS.md exists.
+- **Each phase is recoverable.** If Junie crashes mid-phase, `SCAFFOLD_PROGRESS.md` shows what was done; re-run and it resumes.
+- **Memory checkpoints matter.** `SCAFFOLD_PROGRESS.md` is the single source of truth for progress state.
+- **All phases must pass.** Do not proceed to Phase N+1 if Phase N tests don't pass.
