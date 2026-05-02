@@ -155,10 +155,12 @@ After each unit:
 
 **Files:**
 - `src/main/kotlin/com/example/config/annotations/DevOnlyBean.kt`
-- `src/main/kotlin/com/example/config/SecurityConfig.kt` (extend Unit 6 output)
+- `src/main/kotlin/com/example/config/SecurityConfig.kt` (extend Unit 6 output — WebFlux reactive)
 - `src/main/resources/application.yml` (add `app.dev-doubles.enabled` + `app.entra.*` properties)
-- `src/test/kotlin/com/example/config/DevDoubleGateTest.kt`
-- `src/test/kotlin/com/example/security/OboValidationTest.kt`
+- `src/test/kotlin/com/example/config/DevDoubleGateTest.kt` (Spring slice — gating-misfire layer)
+- `src/test/kotlin/com/example/config/DevDoubleClasspathScanTest.kt` (static classpath scan — load-bearing layer)
+- `src/test/kotlin/com/example/security/JwtTestKit.kt` (deterministic JWT/JWKS fixture builder)
+- `src/test/kotlin/com/example/security/OboValidationTest.kt` (WebFlux + WebTestClient + WireMock)
 
 #### Step A — Define the `@DevOnlyBean` meta-annotation (load-bearing primary control)
 
@@ -242,27 +244,37 @@ app:
 
 Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). Only the `dev` profile flips it to `true`.
 
-#### Step C — `DevDoubleGateTest` (R7b): use `ApplicationContextRunner`, NOT `@SpringBootTest`
+#### Step C — Two-layer dev-double gate test (R7b)
 
-**Why `ApplicationContextRunner`.** `@SpringBootTest` boots the full application context. If a collaborator depends on a dev-double-only bean (legitimately gated off in this test), `@SpringBootTest` fails to bootstrap with `NoSuchBeanDefinitionException` — masquerading as a gate failure when it is really a context-wiring problem. `ApplicationContextRunner` lets the test load only the relevant configuration (sliced context), so we are testing the gate, not the wiring.
+The dev-double gate has two enforcement layers, each implemented as a separate JUnit class. **Both are required** — running only one creates a different vacuous-pass class.
 
-The test has TWO assertions, run with `app.dev-doubles.enabled` UNSET:
+| Test | Surface | Catches |
+|---|---|---|
+| `DevDoubleGateTest` (Spring slice) | Sliced `ApplicationContextRunner` loaded with the **explicit list** of every dev-double config class in the project | A `@DevOnlyBean`-marked bean registering when `app.dev-doubles.enabled` is unset, and any class name matching the dev-double regex registering through Spring |
+| `DevDoubleClasspathScanTest` (static reflection) | The **production classpath**, scanned via `ClassPathScanningCandidateComponentProvider` — independent of any Spring context configuration | Any production class whose simple name matches the dev-double regex AND does not carry `@DevOnlyBean` (catches "ungated dev double exists in source" regardless of whether it gets registered in any test slice) |
 
-1. No bean carrying `@DevOnlyBean` registers.
-2. No bean whose simple class name matches the case-insensitive regex `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` registers.
+**Why two tests.** `ApplicationContextRunner` does NOT component-scan; it only loads explicitly listed `@Configuration` classes (`withUserConfiguration` / `withConfiguration`). If the test slice forgets to include a dev-double config, the slice is incomplete and the assertions pass against an empty context — vacuously. The classpath-scan test catches this case by walking the production classpath at the bytecode level, completely independent of context wiring. **The classpath scan is the load-bearing test; the Spring slice catches gating misfires that only show up at registration time.**
 
-**Bean-name regex (literal):** `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)`
+**Bean-name regex (literal, both tests):** `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)`
 
-**Documented false-positive class.** A bean named `MockingjayController` would match this regex and the test would (correctly, per its design) fail. The marker annotation `@DevOnlyBean` is the load-bearing primary control; the regex is defense-in-depth. Teams that hit a legitimate false positive should rename the bean OR refine the regex with a word-boundary tweak, but they MUST keep the marker check primary — the regex alone is not sufficient because it cannot detect well-named-but-still-fake beans.
+**Documented false-positive class.** A class named `MockingjayController` matches this regex. The marker annotation `@DevOnlyBean` is the load-bearing primary control; the regex is defense-in-depth. Legitimate false positives must be either (a) renamed, OR (b) explicitly allow-listed in `DevDoubleClasspathScanTest.ALLOWLIST` (set with a one-line justification per entry). Do not remove the regex check.
+
+##### `DevDoubleGateTest.kt` — Spring slice (gating-misfire catch)
+
+`withUserConfiguration` MUST list every `@Configuration` class that defines or imports dev/test-double beans. The placeholder shown below MUST be replaced by the scaffolded project's actual config class list — the playbook treats this as a required step, NOT optional. Failure to enumerate is failure to test.
 
 ```kotlin
 // src/test/kotlin/com/example/config/DevDoubleGateTest.kt
 package com.example.config
 
 import com.example.config.annotations.DevOnlyBean
+// REQUIRED: enumerate every @Configuration class in this project that defines dev-double beans.
+// If this project also has @Component-scanned dev doubles (e.g., MockOrchestratorClient),
+// import and pass them via .withUserConfiguration(...) too. Missing imports = vacuous pass.
+import com.example.dev.DevDoublesConfig                  // contains @DevOnlyBean @Bean methods
+import com.example.dev.MockOrchestratorClient            // @DevOnlyBean @Component (playbook 04 Step 3)
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
-import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 
 class DevDoubleGateTest {
@@ -270,8 +282,19 @@ class DevDoubleGateTest {
     private val devDoubleNamePattern =
         Regex("^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)", RegexOption.IGNORE_CASE)
 
+    /**
+     * Loads every dev-double config class in the project. If you add a new one,
+     * append it here — `DevDoubleClasspathScanTest` will fail the build if a new
+     * dev-double class exists in the source tree but is missing from this list
+     * (its check is independent of this slice).
+     */
     private val contextRunner: ApplicationContextRunner = ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(/* the production config slice under test */))
+        .withUserConfiguration(
+            DevDoublesConfig::class.java,
+            MockOrchestratorClient::class.java,
+            // ADD MORE: every @Configuration / @Component class that defines or imports
+            // a dev/test double belongs in this list.
+        )
         // NOTE: app.dev-doubles.enabled is intentionally NOT set here.
         // matchIfMissing = false on the meta-annotation makes the absence fail-closed.
 
@@ -308,16 +331,100 @@ class DevDoubleGateTest {
                 .isEmpty()
         }
     }
+
+    @Test
+    fun `dev-double beans DO register when app dev-doubles enabled is true`() {
+        // Positive integration check — with the property set, dev workflows are not regressed.
+        contextRunner
+            .withPropertyValues("app.dev-doubles.enabled=true")
+            .run { context ->
+                val markedBeans = context.getBeansWithAnnotation(DevOnlyBean::class.java).keys
+                assertThat(markedBeans).isNotEmpty
+            }
+    }
 }
 ```
 
-**Failure modes this test catches:**
-- A developer adds `@Component class MockFooClient` without `@DevOnlyBean` → name regex fires.
-- A developer adds `@DevOnlyBean class FakeAuthClient` but the property gate misfires → annotation check fires.
-- A developer hand-rolls `@ConditionalOnProperty` on a class but forgets the marker → name regex fires (defense-in-depth).
-- Bean named `MockingjayController` registers → test correctly fires (documented false positive — rename or refine regex; do NOT remove marker check).
+##### `DevDoubleClasspathScanTest.kt` — static scan (load-bearing — independent of Spring slicing)
 
-**Integration check (no regression of dev workflow):** with `app.dev-doubles.enabled=true` set on the runner via `.withPropertyValues("app.dev-doubles.enabled=true")`, dev-double beans DO load — confirm by switching the runner config in a separate test method.
+This test walks the production classpath without involving any Spring context. It catches the case where a dev-double class exists in source but was forgotten in the slice. Any class whose simple name matches the regex MUST carry `@DevOnlyBean` OR appear in the allow-list with a justification.
+
+```kotlin
+// src/test/kotlin/com/example/config/DevDoubleClasspathScanTest.kt
+package com.example.config
+
+import com.example.config.annotations.DevOnlyBean
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
+import org.springframework.core.type.filter.RegexPatternTypeFilter
+import org.springframework.util.ClassUtils
+import java.util.regex.Pattern
+
+class DevDoubleClasspathScanTest {
+
+    /**
+     * Production root package — the scan does NOT walk test-tree classes,
+     * since test fixtures may legitimately contain dev-double-named helpers.
+     */
+    private val productionBasePackage = "com.example"
+
+    /**
+     * Allow-list of class simple-name regex matches that are NOT dev doubles.
+     * Add an entry here ONLY with a one-line justification. The regex check
+     * is defense-in-depth; if you allow-list aggressively you weaken the gate.
+     */
+    private val allowList: Set<String> = setOf(
+        // Example justification format: ClassName -> "why it matches but is not a dev double"
+        // "MockingjayController" to "real controller named after the book, not a test double",
+    ).map { it }.toSet()
+
+    /** Java/Kotlin simple-name regex — same as DevDoubleGateTest. */
+    private val devDoubleNamePattern: Pattern = Pattern.compile(
+        "^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)",
+        Pattern.CASE_INSENSITIVE,
+    )
+
+    @Test
+    fun `every production class matching the dev-double name regex carries @DevOnlyBean`() {
+        // useDefaultFilters = false: we provide our own include filter via regex.
+        val scanner = ClassPathScanningCandidateComponentProvider(false).apply {
+            // Match any class whose FQCN simple name starts with a dev-double prefix.
+            addIncludeFilter(RegexPatternTypeFilter(Pattern.compile(".*\\.($devDoubleNamePattern).*")))
+        }
+
+        val ungated: List<String> = scanner.findCandidateComponents(productionBasePackage)
+            .mapNotNull { bd -> bd.beanClassName }
+            .filter { fqcn ->
+                val simpleName = fqcn.substringAfterLast('.')
+                devDoubleNamePattern.matcher(simpleName).find() && simpleName !in allowList
+            }
+            .filter { fqcn ->
+                // Must NOT carry @DevOnlyBean (class-level). @Bean-method-level DevOnlyBean is
+                // also valid; this scan errs on the side of class-level check because methods are
+                // not exposed by ClassPathScanningCandidateComponentProvider.
+                val cls = ClassUtils.forName(fqcn, javaClass.classLoader)
+                cls.getAnnotation(DevOnlyBean::class.java) == null
+            }
+
+        assertThat(ungated)
+            .withFailMessage(
+                "FAIL THE BUILD: production classes whose simple name matches " +
+                    "(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop) but do NOT carry " +
+                    "@DevOnlyBean: %s. Either add the marker, rename the class, or add the simple " +
+                    "name to DevDoubleClasspathScanTest.allowList with a one-line justification.",
+                ungated,
+            )
+            .isEmpty()
+    }
+}
+```
+
+**Failure modes the two tests catch together:**
+- Source has `@Component class MockFooClient` without `@DevOnlyBean` → classpath-scan fires (independent of any test slice).
+- Source has `@DevOnlyBean class FakeAuthClient` but the property gate misfires → Spring slice annotation check fires.
+- Source has `@DevOnlyBean class MockOrchestratorClient` correctly gated, but `DevDoubleGateTest` slice forgot to include `DevDoublesConfig` → classpath-scan still validates the marker is present, so the test does not pass vacuously even when the slice is incomplete.
+- Class named `MockingjayController` in source → classpath-scan fires unless allow-listed with justification.
 
 #### Step D — OBO JWT validation in `SecurityConfig` (R6c) — **WebFlux reactive**
 
@@ -505,16 +612,17 @@ object JwtTestKit {
 
 ##### `OboValidationTest.kt` — WebFlux + WebTestClient
 
+**Lifecycle ordering — load-bearing.** `@DynamicPropertySource` is invoked while Spring is *building the application context*, which happens **before** JUnit's `@BeforeAll`. If WireMock is started in `@BeforeAll` and the property supplier calls `wireMock.baseUrl()`, that supplier will execute against a not-yet-started server (or a stale port from a previous run) and the resulting `app.entra.jwks-uri` will be wrong. The test then either throws during context startup or wires `NimbusReactiveJwtDecoder` against an unusable URL — turning the OBO test into a vacuous pass that proves nothing about JWT rejection.
+
+The fix: start WireMock **before** Spring touches dynamic properties. Use a JUnit 5 `static` initializer block on the `companion object` so the server is up by the time the class is loaded — the same JVM phase that runs `@DynamicPropertySource`. Stop the server via a JVM shutdown hook (or `@AfterAll`; both work because shutdown is idempotent for WireMock). Do NOT rely on `@BeforeAll` to start WireMock for this test.
+
 ```kotlin
 // src/test/kotlin/com/example/security/OboValidationTest.kt
 package com.example.security
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig
-import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.TestInstance
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment
@@ -523,7 +631,6 @@ import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.reactive.server.WebTestClient
 
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class OboValidationTest {
 
     @Autowired private lateinit var webClient: WebTestClient
@@ -534,20 +641,23 @@ class OboValidationTest {
 
         private val wireMock: WireMockServer = WireMockServer(wireMockConfig().dynamicPort())
 
-        @BeforeAll
-        @JvmStatic
-        fun startWireMock() {
+        // ── LOAD-BEARING ────────────────────────────────────────────────────────
+        // Static initializer runs at class-load time, BEFORE Spring resolves
+        // @DynamicPropertySource. By the time the property supplier reads
+        // wireMock.baseUrl() the server is already listening on its dynamic port.
+        // Do NOT move this into @BeforeAll — that runs AFTER context startup.
+        // ────────────────────────────────────────────────────────────────────────
+        init {
             wireMock.start()
             JwtTestKit.stubJwks(wireMock)
+            // Idempotent shutdown — covers JVM exit even if the test class is
+            // re-loaded across forked JUnit runs.
+            Runtime.getRuntime().addShutdownHook(Thread {
+                if (wireMock.isRunning) wireMock.stop()
+            })
         }
 
-        @AfterAll
-        @JvmStatic
-        fun stopWireMock() {
-            wireMock.stop()
-        }
-
-        /** Bind Spring properties at runtime so SecurityConfig points at WireMock + the test claims. */
+        /** Bind Spring properties at context startup. WireMock is already running (see init). */
         @JvmStatic
         @DynamicPropertySource
         fun properties(registry: DynamicPropertyRegistry) {
@@ -605,23 +715,32 @@ class OboValidationTest {
 
 Per existing TDD discipline:
 
-1. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleGateTest red`
-2. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleGateTest green`
-3. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) + OboValidationTest red`
-4. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) + OboValidationTest green`
+1. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleClasspathScanTest red`
+2. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleClasspathScanTest green`
+3. `test(rag-be): DevDoubleGateTest (Spring slice) red`
+4. `test(rag-be): DevDoubleGateTest (Spring slice) green`
+5. `test(rag-be): JwtTestKit + WireMock JWKS publisher`
+6. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest red`
+7. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest green`
 
 #### Step G — Verification (this unit fails the build when…)
 
-Both tests **fail the build** under the following conditions:
+All three tests **fail the build** under the following conditions:
 
-**`DevDoubleGateTest` fails the build when:**
-- A `@DevOnlyBean`-marked bean registers without `app.dev-doubles.enabled=true`.
-- A bean whose simple class name matches `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` registers without the property set.
+**`DevDoubleClasspathScanTest` fails the build when (load-bearing layer):**
+- A production class under `com.example` whose simple name matches `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` does NOT carry `@DevOnlyBean` and is NOT in the allow-list.
+- This catches the "ungated dev double exists in source" case independent of whether any Spring test slice happens to include it.
+
+**`DevDoubleGateTest` fails the build when (gating-misfire layer):**
+- A `@DevOnlyBean`-marked bean registers when `app.dev-doubles.enabled` is unset (the property gate or the meta-annotation broke).
+- A bean whose simple class name matches the regex registers in the explicit slice without the property set.
+- The positive integration check fails — i.e., dev-double beans do NOT register when `app.dev-doubles.enabled=true`. (Catches accidental over-locking.)
 
 **`OboValidationTest` fails the build when:**
 - A request without `Authorization` header returns anything other than 401.
-- A malformed JWT, a forged JWT, a JWT with wrong `aud`, or a JWT with wrong `iss` returns anything other than 401.
+- A malformed JWT, a forged JWT (signed by a key NOT in the JWKS), a JWT with wrong `aud`, or a JWT with wrong `iss` returns anything other than 401.
 - A valid JWT does NOT return 200.
+- `WireMockServer` is not listening at `wireMock.baseUrl()` when Spring resolves `@DynamicPropertySource` (the static initializer block in the companion object guarantees this; if scaffolders move the start logic into `@BeforeAll`, the test loses this guarantee).
 
 ---
 
