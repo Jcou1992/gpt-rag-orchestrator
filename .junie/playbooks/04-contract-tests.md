@@ -432,18 +432,25 @@ const mode = import.meta.env.MODE;
 const isDevMode = mode === 'development' || mode === 'test';
 const isLocalRedirectAllowed = ALLOWS_LOCAL_REDIRECT.has(mode);
 
-// Loopback hostname detector: `localhost`, every IPv4 in 127.0.0.0/8, and
-// IPv6 `::1`. A simple `/localhost/` regex misses `https://127.0.0.1:5173`
-// and `https://[::1]:5173`, both of which Microsoft Identity treats as
-// loopback and which MSAL will redirect to in dev.
+// Loopback hostname detector. Covers four classes Microsoft Identity treats
+// as loopback and MSAL will redirect to in dev:
+//   1. `localhost`
+//   2. IPv4: any `127.x.y.z` (RFC 3330, all of 127.0.0.0/8)
+//   3. IPv6: `::1`
+//   4. IPv4-mapped IPv6: `::ffff:127.x.y.z` and the compressed-hex form
+//      Node normalizes them to (`::ffff:7f00:1`, `::ffff:7f05:607`, etc.)
 //
-// IPv6 caveat: in Node.js (WHATWG URL), `new URL('http://[::1]:5173').hostname`
-// returns `'[::1]'` WITH the surrounding brackets — different from the bare
-// `::1` that DOM URL implementations sometimes return. We strip a leading/
-// trailing bracket pair before comparing so both shapes are caught. Quick
-// sanity:
-//   new URL('http://[::1]:5173').hostname  // → '[::1]'  (Node)
-//   '[::1]'.replace(/^\[|\]$/g, '')        // → '::1'
+// Node URL caveats (verified locally with `node -e ...`):
+//   new URL('http://[::1]:5173').hostname                   // → '[::1]'
+//   new URL('http://[::ffff:127.0.0.1]:5173').hostname      // → '[::ffff:7f00:1]'
+//   new URL('http://[::ffff:127.5.6.7]:5173').hostname      // → '[::ffff:7f05:607]'
+//   new URL('http://localhost:5173').hostname               // → 'localhost'
+//   new URL('http://127.0.0.1:5173').hostname               // → '127.0.0.1'
+// Node returns IPv6 hostnames WITH surrounding brackets (DOM URL impls
+// sometimes return them bare). We strip a leading/trailing bracket pair so
+// both shapes reduce to the same form before comparing. We also normalize
+// IPv4-mapped IPv6 addresses (`::ffff:...`) into the IPv4 they wrap so
+// `127.x.y.z` reachable through that wrapper is still caught.
 function isLoopbackHost(value) {
   if (typeof value !== 'string') return false;
   let url;
@@ -455,6 +462,26 @@ function isLoopbackHost(value) {
   if (/^127(?:\.\d{1,3}){3}$/.test(host)) return true;
   // IPv6 loopback: ::1.
   if (host === '::1') return true;
+  // IPv4-mapped IPv6: `::ffff:` prefix wrapping an IPv4 address.
+  // Two surface forms reach us:
+  //   (a) Dotted-decimal tail (rare from Node, common from raw input):
+  //       `::ffff:127.0.0.1`. Match the tail against the IPv4 regex above.
+  //   (b) Compressed-hex tail (what Node serializes IPv4-mapped to):
+  //       `::ffff:7f00:1`. The first hex group's high byte is the first IPv4
+  //       octet — for any 127.x.y.z mapping, that high byte is 0x7f.
+  // Failing to handle (b) is the round-21 adversarial bypass: a production
+  // build accepted `http://[::ffff:127.0.0.1]:5173` as a non-loopback URL.
+  const mapped = host.match(/^::ffff:(.+)$/);
+  if (mapped) {
+    const tail = mapped[1];
+    if (/^127(?:\.\d{1,3}){3}$/.test(tail)) return true; // (a) dotted-decimal
+    const hex = tail.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {                                            // (b) compressed-hex
+      const word = parseInt(hex[1], 16);
+      // High byte of the first 16-bit group == first IPv4 octet.
+      if (((word >> 8) & 0xff) === 0x7f) return true;
+    }
+  }
   return false;
 }
 
