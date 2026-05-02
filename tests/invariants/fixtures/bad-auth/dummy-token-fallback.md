@@ -28,6 +28,13 @@ const a = p().catch(() => 'stub-lower');
 const b = p().catch(() => "STUB-double");
 const c = p().catch(() => 'auth-stub-1');
 const d = p().catch(() => "auth-stub-2");
+
+// Non-literal catch-substitute (round-33 closure): any `.catch(... => ...)`
+// pattern returning a value, regardless of what the value is.
+const e = p().catch(() => makeDevToken());
+const f = p().catch(() => cachedToken);
+const g = p().catch(() => 'FAKE_JWT');
+const h = p().catch((err) => fallbackTokenFor(err));
 ```
 
 ## Forbidden env-var names

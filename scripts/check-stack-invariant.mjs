@@ -27,29 +27,36 @@ const TARGET_DIRS = [
     : join(REPO_ROOT, '.junie/playbooks'),
 ];
 
-// Forbidden tokens, scoped to Kotlin/Java fenced blocks. Each entry: { token, why }.
-// Match by substring, line-by-line, inside Kotlin/Java code blocks.
+// Forbidden patterns scoped to Kotlin/Java fenced blocks. Each entry:
+// { regex, label, why }. We use regex with `\b...\b` boundaries (instead of
+// substring with an `import ` prefix) so FORBIDDEN types are caught both
+// as imports AND as fully-qualified-name usages without an import — the
+// round-33 bypass: `var http: org.springframework...HttpSecurity` would
+// otherwise compile against an unimported but transitively available
+// servlet type and silently re-introduce Spring MVC wiring on a WebFlux
+// scaffold. `\b` ensures `MockMvc` matches but `MockMvcRequestBuilders`
+// does not (separate rule for the longer FQN).
 const FORBIDDEN = [
   // Servlet Spring Security (must use ServerHttpSecurity / SecurityWebFilterChain instead)
-  { token: 'import org.springframework.security.config.annotation.web.builders.HttpSecurity', why: 'use ServerHttpSecurity (WebFlux)' },
-  { token: 'import org.springframework.security.web.SecurityFilterChain',                     why: 'use SecurityWebFilterChain (WebFlux)' },
-  { token: 'import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity', why: 'use @EnableWebFluxSecurity (WebFlux)' },
-  { token: '@EnableWebSecurity',                                                              why: 'use @EnableWebFluxSecurity (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.config\.annotation\.web\.builders\.HttpSecurity\b/,                why: 'use ServerHttpSecurity (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.web\.SecurityFilterChain\b/,                                       why: 'use SecurityWebFilterChain (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.config\.annotation\.web\.configuration\.EnableWebSecurity\b/,      why: 'use @EnableWebFluxSecurity (WebFlux)' },
+  { regex: /@EnableWebSecurity\b/,                                                                                why: 'use @EnableWebFluxSecurity (WebFlux)' },
 
   // Servlet JWT decoder (must use ReactiveJwtDecoder / NimbusReactiveJwtDecoder)
-  { token: 'import org.springframework.security.oauth2.jwt.JwtDecoder',                       why: 'use ReactiveJwtDecoder (WebFlux)' },
-  { token: 'import org.springframework.security.oauth2.jwt.NimbusJwtDecoder',                 why: 'use NimbusReactiveJwtDecoder (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.oauth2\.jwt\.JwtDecoder\b/,                                         why: 'use ReactiveJwtDecoder (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.oauth2\.jwt\.NimbusJwtDecoder\b/,                                   why: 'use NimbusReactiveJwtDecoder (WebFlux)' },
 
   // Servlet test stack (must use WebTestClient)
-  { token: 'import org.springframework.test.web.servlet.MockMvc',                             why: 'use WebTestClient (WebFlux)' },
-  { token: '@AutoConfigureMockMvc',                                                           why: 'use @AutoConfigureWebTestClient (WebFlux)' },
-  { token: 'import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc', why: 'use @AutoConfigureWebTestClient (WebFlux)' },
-  { token: 'import org.springframework.test.web.servlet.request.MockMvcRequestBuilders',      why: 'use WebTestClient request DSL (WebFlux)' },
-  { token: 'import org.springframework.test.web.servlet.result.MockMvcResultMatchers',        why: 'use WebTestClient assertion DSL (WebFlux)' },
+  { regex: /\borg\.springframework\.test\.web\.servlet\.MockMvc\b/,                                               why: 'use WebTestClient (WebFlux)' },
+  { regex: /@AutoConfigureMockMvc\b/,                                                                              why: 'use @AutoConfigureWebTestClient (WebFlux)' },
+  { regex: /\borg\.springframework\.boot\.test\.autoconfigure\.web\.servlet\.AutoConfigureMockMvc\b/,             why: 'use @AutoConfigureWebTestClient (WebFlux)' },
+  { regex: /\borg\.springframework\.test\.web\.servlet\.request\.MockMvcRequestBuilders\b/,                       why: 'use WebTestClient request DSL (WebFlux)' },
+  { regex: /\borg\.springframework\.test\.web\.servlet\.result\.MockMvcResultMatchers\b/,                         why: 'use WebTestClient assertion DSL (WebFlux)' },
 
-  // Servlet API
-  { token: 'import jakarta.servlet',                                                          why: 'WebFlux has no servlet API (use Spring WebFlux types)' },
-  { token: 'import javax.servlet',                                                            why: 'WebFlux has no servlet API (use Spring WebFlux types)' },
+  // Servlet API (matches fully-qualified usage like `jakarta.servlet.http.HttpServletRequest`)
+  { regex: /\bjakarta\.servlet\b/,                                                                                 why: 'WebFlux has no servlet API (use Spring WebFlux types)' },
+  { regex: /\bjavax\.servlet\b/,                                                                                   why: 'WebFlux has no servlet API (use Spring WebFlux types)' },
 ];
 
 // Scan helpers
@@ -108,11 +115,12 @@ function scanFile(file) {
   for (const block of iterateCodeBlocks(text)) {
     for (const line of block.lines) {
       for (const rule of FORBIDDEN) {
-        if (line.text.includes(rule.token)) {
+        const m = rule.regex.exec(line.text);
+        if (m) {
           violations.push({
             file: relative(REPO_ROOT, file),
             line: line.n,
-            token: rule.token,
+            token: m[0],
             why: rule.why,
             lang: block.lang,
           });

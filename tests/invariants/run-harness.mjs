@@ -55,10 +55,12 @@ const cases = [
     name: 'stack (servlet imports)',
     script: 'scripts/check-stack-invariant.mjs',
     fixtureDir: resolve(__dirname, 'fixtures/bad-stack'),
-    // 12 entries in check-stack-invariant.mjs FORBIDDEN; fixture covers
-    // all 12 (plus one extra @AutoConfigureMockMvc usage line so the
-    // annotation rule fires alongside the import rule).
-    expectedViolations: 13,
+    // 13 entries in check-stack-invariant.mjs FORBIDDEN; fixture covers
+    // all 13 entries via imports + one extra @AutoConfigureMockMvc
+    // usage line (annotation rule fires alongside the import rule), plus
+    // two FQN-without-import lines (HttpSecurity + SecurityFilterChain
+    // FQN usages from the round-33 fixture extension).
+    expectedViolations: 15,
     sentinels: [
       'HttpSecurity',
       'SecurityFilterChain',
@@ -80,7 +82,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 16,                 // 14 substring + 1 regex × occurrences in fixture
+    expectedViolations: 25,                 // 14 substring + 2 regex × occurrences in fixture (incl. 9 catch-substitute lines × 2 rules each = 18; + 5 narrative + 3 env var + ... = 25)
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
@@ -96,6 +98,8 @@ const cases = [
       'VITE_MSAL_TENANT_ID',
       'VITE_MSAL_API_SCOPE',
       'RAG_API_URL',
+      'catch-and-substitute',     // structural regex label — proves the
+                                   // round-33 non-literal substitute rule fires
     ],
   },
 ];

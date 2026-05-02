@@ -63,13 +63,32 @@ const FORBIDDEN = [
   { pattern: 'VITE_MSAL_API_SCOPE',                 why: 'obsolete env-var name; validator does NOT look it up — use VITE_API_SCOPE instead' },
 ];
 
-// Word-boundary regex rules — used when a substring would false-positive
-// inside a longer identifier (e.g., `RAG_API_URL` inside `VITE_RAG_API_URL`).
+// Word-boundary / structural regex rules.
 const FORBIDDEN_REGEX = [
   {
     regex: /\bRAG_API_URL\b/,
     label: 'RAG_API_URL',
     why: 'env var must be VITE_RAG_API_URL — Vite exposes only VITE_-prefixed names to the bundle',
+  },
+  // Structural catch-and-substitute: any `.catch(... => <body>)` pattern.
+  // Closes the round-33 bypass class — the substring rules above only
+  // matched specific token literals (`'STUB-JWT'` / `'auth-stub-...'`).
+  // A template could re-introduce the v3 leak class with a different
+  // returned value (e.g., `.catch(() => makeDevToken())`,
+  // `.catch(() => cachedToken)`, `.catch(() => 'FAKE_JWT')`) and slip
+  // past the literal-only checks. This rule catches every `.catch(...
+  // => ...)` shape; legitimate uses (e.g., re-throwing) need an explicit
+  // allow-anchor and ALLOWLIST entry.
+  //
+  // The regex anchors on `.catch(`, then optionally consumes one
+  // single-arg arrow head `(...)?` or a bare ident, then `=>`, then
+  // requires at least one non-)/non-whitespace char before the closing
+  // `)`. That body shape rules out `.catch()` alone and `.catch(handler)`
+  // (no arrow), but flags every direct-arrow substitution.
+  {
+    regex: /\.catch\s*\(\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)?\s*=>\s*[^)\s][^)]*\)/,
+    label: 'catch-and-substitute',
+    why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(... => ...)` substitution silently downgrades the auth boundary',
   },
 ];
 

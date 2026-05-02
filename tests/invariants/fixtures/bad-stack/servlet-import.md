@@ -58,3 +58,13 @@ import javax.servlet.http.HttpServletResponse;
 
 public class BadServlet {}
 ```
+
+```kotlin
+package com.example.bad
+
+// Fully-qualified-name usage WITHOUT an import — closes the round-33
+// bypass class. The rule must match the FQN regardless of `import`.
+class BadFqnUsage {
+    fun configure(http: org.springframework.security.config.annotation.web.builders.HttpSecurity): org.springframework.security.web.SecurityFilterChain = TODO()
+}
+```
