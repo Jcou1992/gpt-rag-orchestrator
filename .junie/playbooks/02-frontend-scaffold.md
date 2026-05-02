@@ -125,18 +125,22 @@ After each unit:
 
 ## Step 3 — MSAL wiring (if opted in)
 
+> **Auth policy is owned by playbook 04 Steps 4 + 6.** Phase 02 does NOT generate a dummy-JWT `auth.js` fallback. The hardened MSAL adapter (`auth.js` delegating to `msalConfig.js`'s `hardenedGetToken`) and the dev-only `auth-stub.js` (resolved by Vite alias only in `mode in ['development', 'test']`) are emitted in playbook 04. Generating a separate dummy-token `auth.js` here would leave a non-hardened module on the production code path that bypasses the R6/R6a/R8/R11 controls, and the leak test (which scans for the dev-stub sentinel only) would NOT catch it.
+
 If user chose **MSAL now** in preflight:
 
-- Generate `src/services/auth.js|ts` with mocked `getToken()` returning a dummy JWT (for local dev).
-- Wire MSAL `@azure/msal-browser` + `@azure/msal-vue` in `main.js|ts` (placeholder config).
-- Add environment vars: `VITE_MSAL_CLIENT_ID`, `VITE_MSAL_TENANT_ID`, `VITE_MSAL_API_SCOPE`.
-- Test: `getToken()` returns a string.
+- DO NOT generate `src/services/auth.js|ts` in this phase. The hardened adapter + dev stub are emitted in playbook 04 Step 4.
+- Wire MSAL `@azure/msal-browser` in `main.js|ts` (placeholder config; `@azure/msal-vue` is OPTIONAL — playbook 04 uses `@azure/msal-browser` directly).
+- Add environment vars: `VITE_MSAL_CLIENT_ID`, `VITE_MSAL_AUTHORITY`, `VITE_MSAL_REDIRECT_URI`, `VITE_API_SCOPE` (note: same names playbook 04 Step 6 validates at startup; do NOT use `VITE_MSAL_TENANT_ID` / `VITE_MSAL_API_SCOPE` — those names diverge from the Step 6 validator and would be flagged as placeholders).
+- Tests: covered by playbook 04 Step 6 (msalConfig validator) and the build-time / runtime / regression layers from playbook 04 Step 5b. Phase 02 does not need its own auth test.
 
 If user chose **TODO:**
 
-- Generate `src/services/auth.js|ts` with `getToken()` throwing `new Error('auth not wired')`.
+- Generate `src/services/auth.js|ts` with `getToken()` throwing `new Error('auth not wired')`. **No dummy/stub return value** — a thrown error is the only acceptable placeholder, since it surfaces the gap loudly via failing tests AND blocks any code path that tries to call MSAL before playbook 04 lands.
 - Test asserts the error is thrown.
 - This makes the gap discoverable via failing tests in CI.
+
+**Single-auth-policy invariant.** Across the entire scaffolded frontend, exactly two `auth*.js` files exist: `src/services/auth.js` (hardened delegator) and `src/services/auth-stub.js` (dev-only sentinel-bearing stub). No third file, no inline `getToken` mock, no catch-and-substitute fallback in `ragApi.js`. The scaffolder rejects any unit instructions that contradict this invariant — see playbook 04 Step 4 and Step 6 for the canonical templates.
 
 ---
 
@@ -287,5 +291,5 @@ Append a memory checkpoint (do not delete prior phases):
 - **TDD non-negotiable:** Show red, show green. No skipping to "speed up."
 - **Test names matter:** Use descriptive names (not `test1`, `test2`). Example: `should emit submit event on Enter key when not streaming`.
 - **No hardcoded URLs:** Use `VITE_RAG_API_URL` env var.
-- **MSAL local fallback:** If MSAL opted but can't auth, fall back to a dummy token for dev (`auth-stub-token`). Log a warning.
+- **MSAL local fallback:** Owned by playbook 04 Step 4 — Vite resolves `@/services/auth` to `auth-stub.js` only when `mode in ['development', 'test']`. The dev stub token is held module-scoped and bears the pre-committed leak-test sentinel; it is NEVER a generic catch-and-substitute fallback in `auth.js` or `ragApi.js`. R8 invariant: `getToken()` failures throw and surface via the sanitized error rendering in `msalConfig.js`.
 - **XSS prevention:** Markdown renderer must sanitize with `dompurify`. Test it with `<script>alert('xss')</script>`.
