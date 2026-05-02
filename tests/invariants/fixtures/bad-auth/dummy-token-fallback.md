@@ -44,6 +44,12 @@ const j = p().catch(
 const k = p().catch(async (err) =>
   retryWithDev(err),
 );
+
+// Round-35 closure: function-expression catch handlers (arrow-only
+// regex would miss these).
+const l = p().catch(function () { return makeDevToken(); });
+const m = p().catch(function (err) { return fallbackTokenFor(err); });
+const n = p().catch(async function () { return makeDevToken(); });
 ```
 
 ## Forbidden env-var names

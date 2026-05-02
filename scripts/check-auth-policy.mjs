@@ -92,6 +92,17 @@ const FORBIDDEN_REGEX = [
     label: 'catch-and-substitute',
     why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(... => ...)` substitution silently downgrades the auth boundary',
   },
+  // Round-35 closure: function-expression catch handler.
+  // `.catch(function () { return makeDevToken(); })` and the async +
+  // generator variants slip past the arrow-only regex above. Match any
+  // `.catch(... function ...)` shape regardless of body. Legitimate
+  // re-throw handlers need an explicit allow-anchor.
+  {
+    multiline: true,
+    regex: /\.catch\s*\(\s*(?:async\s+)?function\b[\s\S]*?\)\s*\{[\s\S]*?\}/g,
+    label: 'catch-fn-substitute',
+    why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(function ...)` handler is forbidden unless the body re-throws unconditionally (use an explicit allow-anchor)',
+  },
 ];
 
 // Allowlist of legitimate prose mentions of forbidden tokens. Each entry

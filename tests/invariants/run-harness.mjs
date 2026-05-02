@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 28,                 // 25 (round-33) + 3 round-34 catch lines (async / multi-line / async-multi)
+    expectedViolations: 31,                 // 28 (round-34) + 3 round-35 function-expression catch lines
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
@@ -105,6 +105,7 @@ const cases = [
       'RAG_API_URL',
       'catch-and-substitute',     // structural regex label — proves the
                                    // round-33 non-literal substitute rule fires
+      'catch-fn-substitute',      // round-35 function-expression handler rule
     ],
   },
 ];
