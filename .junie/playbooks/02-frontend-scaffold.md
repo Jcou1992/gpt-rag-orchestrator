@@ -40,7 +40,18 @@ Include:
 - `vite.config.{js|ts}` — Vue 3 plugin, test setup, alias `@` → `src/`
 - `jsconfig.json` or `tsconfig.json` — per language choice
 - `vitest.config.ts` (if not in vite.config)
-- `.env.example` — RAG_API_URL, VITE_MSAL_CLIENT_ID (if MSAL opted)
+<!-- auth-policy-allow:pb02-step1-env-do-not-emit -->
+- `.env.example` — five exact variable names, ALL prefixed with `VITE_` so Vite exposes them to the client bundle. The names below are the ones the runtime reads (`ragApi.js`) and the playbook 04 Step 6 startup validator checks. Do NOT emit `RAG_API_URL` (missing prefix), `VITE_MSAL_TENANT_ID`, or `VITE_MSAL_API_SCOPE` — those names are silently ignored by Vite or by the validator and surface as the config-error screen at first run:
+
+  ```
+  VITE_RAG_API_URL=http://localhost:8080
+  VITE_MSAL_CLIENT_ID=YOUR_CLIENT_ID
+  VITE_MSAL_AUTHORITY=https://login.microsoftonline.com/<tenant-id>
+  VITE_MSAL_REDIRECT_URI=http://localhost:5173
+  VITE_API_SCOPE=api://<api-client-id>/.default
+  ```
+
+  The four MSAL placeholder values (`YOUR_CLIENT_ID`, `<tenant-id>`, `<api-client-id>`) are intentionally non-functional — the playbook 04 Step 6 validator rejects them at startup so a developer who skips real configuration sees the config-error screen instead of a half-broken auth flow. If MSAL was deferred via the "TODO" preflight branch, omit the four `VITE_MSAL_*` / `VITE_API_SCOPE` lines entirely; Step 3's throwing `getToken()` placeholder already enforces the gap.
 
 Print to user:
 
@@ -132,6 +143,7 @@ If user chose **MSAL now** in preflight:
 
 - DO NOT generate `src/services/auth.js|ts` in this phase. The hardened adapter + dev stub are emitted in playbook 04 Step 4.
 - Wire MSAL `@azure/msal-browser` in `main.js|ts` (placeholder config; `@azure/msal-vue` is OPTIONAL — playbook 04 uses `@azure/msal-browser` directly).
+<!-- auth-policy-allow:pb02-step3-env-do-not-use -->
 - Add environment vars: `VITE_MSAL_CLIENT_ID`, `VITE_MSAL_AUTHORITY`, `VITE_MSAL_REDIRECT_URI`, `VITE_API_SCOPE` (note: same names playbook 04 Step 6 validates at startup; do NOT use `VITE_MSAL_TENANT_ID` / `VITE_MSAL_API_SCOPE` — those names diverge from the Step 6 validator and would be flagged as placeholders).
 - Tests: covered by playbook 04 Step 6 (msalConfig validator) and the build-time / runtime / regression layers from playbook 04 Step 5b. Phase 02 does not need its own auth test.
 
@@ -214,6 +226,7 @@ Low-level SSE parser.
 
 ## Environment variables
 
+<!-- auth-policy-allow:pb02-envvars-do-not-use -->
 The four MSAL vars below are validated at startup by `src/auth/msalConfig.js` (playbook 04 Step 6). All four must be set to non-placeholder values, otherwise the app halts at the config-error screen before mount. Names are exact — `VITE_MSAL_TENANT_ID` and `VITE_MSAL_API_SCOPE` are **not** valid; the validator does not look those names up.
 
 - `VITE_RAG_API_URL` (default: `http://localhost:8080`) — backend URL.

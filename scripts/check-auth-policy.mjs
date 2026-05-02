@@ -31,10 +31,10 @@ const TARGET_DIRS = [
   join(REPO_ROOT, '.junie/playbooks'),
 ];
 
-// Each rule: { pattern, why }. Pattern is matched substring-style on every
-// line inside JS / TS fenced blocks AND on prose lines. We scan prose too
-// because playbook 02's regression was in narrative bullets, not in a code
-// block.
+// Substring-matched forbidden tokens. Each rule: { pattern, why }.
+// Matched substring-style on every line inside JS / TS fenced blocks AND
+// on prose lines. We scan prose too because playbook 02's regression
+// was in narrative bullets, not in a code block.
 const FORBIDDEN = [
   { pattern: 'STUB-JWT',                           why: 'v3 stub-JWT literal — auth-stub.js must not return a hardcoded token name' },
   { pattern: 'auth-stub-token',                    why: 'token-name literal that would survive tree-shaking and ship in prod' },
@@ -51,6 +51,21 @@ const FORBIDDEN = [
   { pattern: '.catch(() => "STUB',                 why: 'double-quoted variant of the same leak class' },
   { pattern: ".catch(() => 'auth-stub",            why: 'auth-stub-token leak class' },
   { pattern: '.catch(() => "auth-stub',            why: 'double-quoted auth-stub-token leak class' },
+  // Obsolete env-var names that drift the scaffold away from playbook 04
+  // Step 6's startup validator. Substring-matched because each name is a
+  // unique full identifier (no parent name embeds it).
+  { pattern: 'VITE_MSAL_TENANT_ID',                 why: 'obsolete env-var name; validator does NOT look it up — use VITE_MSAL_AUTHORITY instead' },
+  { pattern: 'VITE_MSAL_API_SCOPE',                 why: 'obsolete env-var name; validator does NOT look it up — use VITE_API_SCOPE instead' },
+];
+
+// Word-boundary regex rules — used when a substring would false-positive
+// inside a longer identifier (e.g., `RAG_API_URL` inside `VITE_RAG_API_URL`).
+const FORBIDDEN_REGEX = [
+  {
+    regex: /\bRAG_API_URL\b/,
+    label: 'RAG_API_URL',
+    why: 'env var must be VITE_RAG_API_URL — Vite exposes only VITE_-prefixed names to the bundle',
+  },
 ];
 
 // Allowlist of legitimate prose mentions of forbidden tokens. Each entry
@@ -69,12 +84,34 @@ const ALLOWLIST = new Set([
   // anchor allows both patterns at the same prose location.
   'pb02-step3-no-dummy-token:dummy JWT',
   'pb02-step3-no-dummy-token:dummy-token',
+  // Playbook 02 Step 1 .env.example callout: explicitly names obsolete
+  // env-var forms in negative ("do NOT emit") prose.
+  'pb02-step1-env-do-not-emit:VITE_MSAL_TENANT_ID',
+  'pb02-step1-env-do-not-emit:VITE_MSAL_API_SCOPE',
+  'pb02-step1-env-do-not-emit:RAG_API_URL',
+  // Playbook 02 Step 3 MSAL-now branch: same negative-prose pattern.
+  'pb02-step3-env-do-not-use:VITE_MSAL_TENANT_ID',
+  'pb02-step3-env-do-not-use:VITE_MSAL_API_SCOPE',
+  // Playbook 02 Environment-variables docs section: lead-in negative prose.
+  'pb02-envvars-do-not-use:VITE_MSAL_TENANT_ID',
+  'pb02-envvars-do-not-use:VITE_MSAL_API_SCOPE',
+  // Playbook 05 .env.local example block: negative reminder for the
+  // obsolete env-var names so the docs explicitly warn against them.
+  'pb05-env-do-not-use:VITE_MSAL_TENANT_ID',
+  'pb05-env-do-not-use:VITE_MSAL_API_SCOPE',
 ]);
 
 // Pattern used by every allow-listed prose line to mark itself as exempt.
 // Must be on the line IMMEDIATELY ABOVE the line that contains the
 // forbidden token. The anchor id is captured into capture group 1.
 const ALLOW_ANCHOR_RE = /<!--\s*auth-policy-allow:([a-z0-9][a-z0-9-]*)\s*-->/i;
+
+// Anchored variant — matches ONLY when the entire trimmed line is the
+// marker (start-of-string + end-of-string), so a line that mixes the
+// marker with arbitrary other text is NOT skipped during scanning. Used
+// in the per-line short-circuit; ALLOW_ANCHOR_RE remains the form used
+// when resolving the anchor id during the backwards walk.
+const STANDALONE_ANCHOR_RE = /^<!--\s*auth-policy-allow:([a-z0-9][a-z0-9-]*)\s*-->$/i;
 
 function listMarkdownFiles(dir) {
   const out = [];
@@ -98,34 +135,49 @@ function scanFile(file) {
     const line = lines[i];
     // Skip allowlist-anchor lines themselves — anchor IDs may contain
     // forbidden tokens (e.g., `pb02-step3-no-dummy-token`) and would
-    // otherwise self-trigger a violation.
-    if (ALLOW_ANCHOR_RE.test(line)) continue;
-    for (const rule of FORBIDDEN) {
-      if (!line.includes(rule.pattern)) continue;
-      const rel = relative(REPO_ROOT, file);
+    // otherwise self-trigger a violation. Strict: the entire trimmed
+    // line must be JUST the anchor marker. Anything else on the line
+    // (e.g. `<!-- auth-policy-allow:foo --> Generate a dummy-token...`)
+    // is scanned normally — this closes the round-28 same-line bypass
+    // where forbidden prose could ride on an anchor line.
+    if (STANDALONE_ANCHOR_RE.test(line.trim())) continue;
 
-      // Allowlist resolution: scan the previous non-blank line for an
-      // anchor `<!-- auth-policy-allow:<id> -->`. If present, the pair
-      // `(<id>, pattern)` must appear in ALLOWLIST. We walk backwards
-      // skipping blank lines so an anchor-then-blank-line-then-prose
-      // pattern still resolves; we stop at the first non-blank line.
-      let allowed = false;
+    // Helper: resolve allowlist by walking backwards over blank lines to
+    // the nearest non-blank line, looking for an anchor marker.
+    const isAllowed = (label) => {
       for (let k = i - 1; k >= 0; k--) {
         const prev = lines[k];
         if (prev.trim() === '') continue;
         const m = prev.match(ALLOW_ANCHOR_RE);
-        if (m) {
-          const allowKey = `${m[1]}:${rule.pattern}`;
-          if (ALLOWLIST.has(allowKey)) allowed = true;
-        }
-        break;
+        if (m && ALLOWLIST.has(`${m[1]}:${label}`)) return true;
+        return false;
       }
-      if (allowed) continue;
+      return false;
+    };
 
+    const rel = relative(REPO_ROOT, file);
+
+    // Substring rules.
+    for (const rule of FORBIDDEN) {
+      if (!line.includes(rule.pattern)) continue;
+      if (isAllowed(rule.pattern)) continue;
       violations.push({
         file: rel,
         line: i + 1,
         pattern: rule.pattern,
+        why: rule.why,
+        excerpt: line.trim().slice(0, 120),
+      });
+    }
+
+    // Regex rules (word-boundary aware).
+    for (const rule of FORBIDDEN_REGEX) {
+      if (!rule.regex.test(line)) continue;
+      if (isAllowed(rule.label)) continue;
+      violations.push({
+        file: rel,
+        line: i + 1,
+        pattern: rule.label,
         why: rule.why,
         excerpt: line.trim().slice(0, 120),
       });

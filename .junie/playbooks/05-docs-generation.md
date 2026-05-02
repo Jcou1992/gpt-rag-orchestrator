@@ -213,10 +213,13 @@ Create `.env.local` at repo root:
 \`\`\`bash
 # VITE_RAG_API_URL=http://localhost:8080  # default: optional to override
 
-# If MSAL is wired (frontend):
+# If MSAL is wired (frontend) — names MUST match playbook 04 Step 6 validator.
+<!-- auth-policy-allow:pb05-env-do-not-use -->
+# Negative reminder (do NOT use these names): VITE_MSAL_TENANT_ID, VITE_MSAL_API_SCOPE.
 # VITE_MSAL_CLIENT_ID=<your-spa-client-id>
-# VITE_MSAL_TENANT_ID=<your-tenant-id>
-# VITE_MSAL_API_SCOPE=<your-api-scope>
+# VITE_MSAL_AUTHORITY=https://login.microsoftonline.com/<your-tenant-id>
+# VITE_MSAL_REDIRECT_URI=http://localhost:5173
+# VITE_API_SCOPE=api://<your-api-client-id>/.default
 
 # If using real orchestrator (backend):
 # ORCHESTRATOR_URL=https://<your-orchestrator-host>:8080
@@ -286,18 +289,19 @@ export ORCHESTRATOR_API_KEY=<key>
 If MSAL was scaffolded (not left as TODO), configure:
 
 1. Create app registration in Azure Entra ID (SPA type).
-2. Get: Client ID, Tenant ID.
-3. Create app registration for backend (API type), expose scope.
-4. Get: Scope URI.
-5. Set env vars:
+2. Get: Client ID, Tenant ID, Authority URL (`https://login.microsoftonline.com/<tenant-id>`).
+3. Set the redirect URI on the SPA app to your dev URL (e.g. `http://localhost:5173`).
+4. Create app registration for backend (API type), expose scope (e.g. `api://<api-client-id>/.default`).
+5. Set env vars (names MUST match playbook 04 Step 6 startup validator):
    \`\`\`bash
-   export VITE_MSAL_CLIENT_ID=<client-id>
-   export VITE_MSAL_TENANT_ID=<tenant-id>
-   export VITE_MSAL_API_SCOPE=<scope>
+   export VITE_MSAL_CLIENT_ID=<spa-client-id>
+   export VITE_MSAL_AUTHORITY=https://login.microsoftonline.com/<tenant-id>
+   export VITE_MSAL_REDIRECT_URI=http://localhost:5173
+   export VITE_API_SCOPE=api://<api-client-id>/.default
    \`\`\`
-6. Restart frontend: `pnpm dev`.
+6. Restart frontend: `pnpm dev` (or `pnpm dev --mode local-auth` if using the local-auth mode for end-to-end with mocked orchestrator — see playbook 04 offline-dev section).
 
-For offline dev without MSAL, the frontend falls back to a stub JWT (see COMMUNICATION-FALLBACKS.md).
+For frontend-only iteration (no real backend), the Vite alias resolves `@/services/auth` to `auth-stub.js` automatically in `mode in ['development', 'test']`. There is NO catch-and-substitute fallback in production code — `auth.js` delegates to `msalConfig.js`'s hardened `getToken`, and any failure throws and surfaces via the sanitized error rendering (R8 / SC6).
 
 ---
 
