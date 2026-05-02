@@ -151,7 +151,7 @@ After each unit:
 
 **Stack constraint (read first — non-negotiable).** This unit assumes the locked stack: **Kotlin + Spring Boot WebFlux** (not Spring MVC / servlet). Every code template below uses **reactive** Spring Security types (`ServerHttpSecurity`, `SecurityWebFilterChain`, `ReactiveJwtDecoder`, `WebTestClient`). Servlet imports (`HttpSecurity`, `SecurityFilterChain`, `JwtDecoder`, `MockMvc`, `jakarta.servlet.*`) are forbidden and `scripts/check-stack-invariant.mjs` fails the build if any appear in a Kotlin code block in this playbook. If the locked stack ever changes, every snippet here is re-evaluated under the security-correctness dependency noted in `.junie/guidelines.md`.
 
-**Package-root invariant (read first — non-negotiable).** The `@SpringBootApplication` class is `com.example.rag.RagApplication`, so Spring Boot's default component scan starts at `com.example.rag`. Every backend production class in this unit MUST live under `com.example.rag.*` (`com.example.rag.config`, `com.example.rag.dev`, `com.example.rag.security`). Putting a class under `com.example.config` (or any sibling of `com.example.rag`) silently excludes it from the runtime context — the slice tests would still pass against their explicit `withUserConfiguration(...)`, but the deployed app's `SecurityWebFilterChain` and `ReactiveJwtDecoder` beans would be absent and the auth boundary would collapse. `SecurityBeansPresentTest` (Step C) catches this regression at boot time. Test-tree fixtures (e.g., `MockSyntheticDouble` for `DevDoubleClasspathScanTest`) MUST live OUTSIDE `com.example.rag.*` (use `com.fixtures.*`) so the production gate test cannot discover them.
+**Package-root invariant (read first — non-negotiable).** The `@SpringBootApplication` class is `com.example.rag.RagApplication`, so Spring Boot's default component scan starts at `com.example.rag`. Every backend production class in this unit MUST live under `com.example.rag.*` (`com.example.rag.config`, `com.example.rag.dev`, `com.example.rag.security`). Putting a class under `com.example.config` (or any sibling of `com.example.rag`) silently excludes it from the runtime context — the slice tests would still pass against their explicit `withUserConfiguration(...)`, but the deployed app's `SecurityWebFilterChain` and `ReactiveJwtDecoder` beans would be absent and the auth boundary would collapse. `SecurityBeansPresentTest` (Step D) catches this regression at boot time. Test-tree fixtures (e.g., `MockSyntheticDouble` for `DevDoubleClasspathScanTest`) MUST live OUTSIDE `com.example.rag.*` (use `com.fixtures.*`) so the production gate test cannot discover them.
 
 **Why this unit exists.** Frontend hardening (playbook 04 leak test) is decorative without a matching backend gate plus real token validation on the wire. This unit closes both: (a) every dev/test-double bean is property-gated fail-closed, and (b) `oauth2ResourceServer().jwt()` is wired with JWKS URI, audience, and issuer so unsigned/forged tokens are rejected at the boundary. The two integration tests below — `DevDoubleGateTest` and `OboValidationTest` — fail the build whenever either gate regresses.
 
@@ -173,7 +173,7 @@ A single class-level `@ConditionalOnProperty` on a `@Configuration` class does n
 
 This cascading behavior is why we need a meta-annotation rather than a plain marker. A plain marker would force authors to remember to add `@ConditionalOnProperty` on every site, which is exactly the bypass we are trying to prevent.
 
-**Convention:** every dev/test-double bean class OR `@Bean` method MUST carry `@DevOnlyBean`. The bean-name regex check in `DevDoubleGateTest` (Step C) is defense-in-depth for the case where someone forgets the marker.
+**Convention:** every dev/test-double bean class OR `@Bean` method MUST carry `@DevOnlyBean`. The bean-name regex check in `DevDoubleGateTest` (Step D) is defense-in-depth for the case where someone forgets the marker.
 
 ```kotlin
 // src/main/kotlin/com/example/rag/config/annotations/DevOnlyBean.kt
@@ -249,7 +249,56 @@ app:
 
 Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). Only the `dev` profile flips it to `true`.
 
-#### Step C — Two-layer dev-double gate test (R7b)
+#### Step C — Generate `MockOrchestratorClient.kt` (must land BEFORE the gate tests below)
+
+`DevDoubleGateTest` (Step D) lists `MockOrchestratorClient::class.java` in `withUserConfiguration(...)`, and `OboValidationTest` (Step F) sets `app.dev-doubles.enabled=true` so this mock is registered when a valid JWT is exercised. Both tests are generated in this unit, in this phase. The mock class therefore MUST be generated in this step — BEFORE the tests reference it. Generating it later (e.g., in `04-contract-tests`) creates a compile-time ordering bug: phase-03 tests would reference a phase-04 class that does not yet exist on the classpath.
+
+The mock implements the `OrchestratorClient` interface defined in earlier units of this playbook. **Every cross-package type used in the mock is imported explicitly** — bare names would silently fail to resolve in a different package and produce a non-compiling scaffold. The import paths below match the package tree at the top of this playbook (`web/dto` for DTOs, `service` for service interfaces, `config` for configuration types).
+
+```kotlin
+// src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt
+package com.example.rag.dev
+
+import com.example.rag.config.OrchestratorProperties             // configuration properties (Unit 5/6 output)
+import com.example.rag.config.annotations.DevOnlyBean             // gate marker (Step A)
+import com.example.rag.service.OrchestratorClient                 // service interface (Unit 7 output)
+import com.example.rag.web.dto.AskChunk                           // sealed class — emitted variants (DTO, Unit 1 file list line 107)
+import com.example.rag.web.dto.UserContext                        // request DTO field (Unit 4 output)
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import org.springframework.stereotype.Component
+
+/**
+ * Offline-dev fallback. Returns canned SSE chunks/citations/done events.
+ * Gated by @DevOnlyBean (composes @ConditionalOnProperty(app.dev-doubles.enabled,
+ * matchIfMissing = false)) so it CANNOT register in production by accident.
+ *
+ * Path is documented under playbook 04 Step 3, but the file itself lives here
+ * because phase-03 tests (DevDoubleGateTest, OboValidationTest) reference it.
+ */
+@DevOnlyBean
+@Component
+class MockOrchestratorClient(
+    val properties: OrchestratorProperties,
+) : OrchestratorClient {
+
+    override fun askOrchestrator(
+        ask: String,
+        conversationId: String,
+        userContext: UserContext,
+    ): Flow<AskChunk> = flow {
+        emit(AskChunk.Chunk("This is a mocked response to: \"$ask\""))
+        delay(100)
+        emit(AskChunk.Citation("Sample Doc", "https://example.com/doc"))
+        emit(AskChunk.Done())
+    }
+}
+```
+
+**Import-resolution sanity check.** All five cross-package types (`OrchestratorProperties`, `OrchestratorClient`, `AskChunk`, `UserContext`, `DevOnlyBean`) are imported by fully qualified name AND each path matches the package tree shown earlier in this playbook. If a previous unit places any of them in a different package, update the import lines here verbatim — Kotlin will NOT silently fall through to an alternate package.
+
+#### Step D — Two-layer dev-double gate test (R7b)
 
 The dev-double gate has two enforcement layers, each implemented as a separate JUnit class. **Both are required** — running only one creates a different vacuous-pass class.
 
@@ -584,7 +633,7 @@ class SecurityBeansPresentTest {
 - Source has `@DevOnlyBean class MockOrchestratorClient` correctly gated, but `DevDoubleGateTest` slice forgot to include `DevDoublesConfig` → classpath-scan still validates the marker is present, so the test does not pass vacuously even when the slice is incomplete.
 - Class named `MockingjayController` in source → classpath-scan fires unless allow-listed with justification.
 
-#### Step D — OBO JWT validation in `SecurityConfig` (R6c) — **WebFlux reactive**
+#### Step E — OBO JWT validation in `SecurityConfig` (R6c) — **WebFlux reactive**
 
 Spring Security reactive `oauth2ResourceServer().jwt()` is configured against the Entra ID JWKS URI with required `aud` and expected `iss`. Properties have **no defaults** — a missing property fails the app at startup, not at first request. This prevents silent acceptance of unsigned tokens.
 
@@ -659,7 +708,7 @@ class SecurityConfig(
 }
 ```
 
-#### Step E — `JwtTestKit` (test util) + `OboValidationTest` (R7c): real wire-level rejection
+#### Step F — `JwtTestKit` (test util) + `OboValidationTest` (R7c): real wire-level rejection
 
 This step is split into two artifacts: a deterministic JWT/JWKS fixture builder (`JwtTestKit.kt`) and the actual integration test (`OboValidationTest.kt`). Together they cover all six cases — if any returns 200 when it should be 401, the build fails.
 
@@ -892,69 +941,22 @@ class OboValidationTest {
 
 **No `TODO(...)` placeholders.** Every fixture is built deterministically from `JwtTestKit`. The forged path is signed by an in-memory keypair that is never published in the JWKS endpoint — `NimbusReactiveJwtDecoder` cannot resolve a matching `kid`/key and rejects the token, exactly as production would reject an attacker-signed JWT.
 
-#### Step F — Generate `MockOrchestratorClient.kt` (the one dev double the gate tests reference)
-
-`DevDoubleGateTest` (Step C) lists `MockOrchestratorClient::class.java` in `withUserConfiguration(...)`, and `OboValidationTest` (Step E) sets `app.dev-doubles.enabled=true` so this mock is registered when a valid JWT is exercised. Both tests are generated in this unit, in this phase. Therefore the mock class itself MUST be generated in this phase too — generating it later (e.g., in `04-contract-tests`) creates a compile-time ordering bug: phase-03 tests reference a phase-04 class that does not yet exist on the classpath.
-
-The mock implements the `OrchestratorClient` interface defined in earlier units of this playbook. **Every cross-package type used in the mock is imported explicitly** — bare names would silently fail to resolve in a different package and produce a non-compiling scaffold.
-
-```kotlin
-// src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt
-package com.example.rag.dev
-
-import com.example.rag.config.OrchestratorProperties             // configuration properties (Unit 5/6 output)
-import com.example.rag.config.annotations.DevOnlyBean             // gate marker (Step A)
-import com.example.rag.service.AskChunk                           // sealed class — emitted variants (Unit 7 output)
-import com.example.rag.service.OrchestratorClient                 // interface (Unit 7 output)
-import com.example.rag.web.dto.UserContext                        // request DTO field (Unit 4 output)
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import org.springframework.stereotype.Component
-
-/**
- * Offline-dev fallback. Returns canned SSE chunks/citations/done events.
- * Gated by @DevOnlyBean (composes @ConditionalOnProperty(app.dev-doubles.enabled,
- * matchIfMissing = false)) so it CANNOT register in production by accident.
- *
- * Path is documented under playbook 04 Step 3, but the file itself lives here
- * because phase-03 tests (DevDoubleGateTest, OboValidationTest) reference it.
- */
-@DevOnlyBean
-@Component
-class MockOrchestratorClient(
-    val properties: OrchestratorProperties,
-) : OrchestratorClient {
-
-    override fun askOrchestrator(
-        ask: String,
-        conversationId: String,
-        userContext: UserContext,
-    ): Flow<AskChunk> = flow {
-        emit(AskChunk.Chunk("This is a mocked response to: \"$ask\""))
-        delay(100)
-        emit(AskChunk.Citation("Sample Doc", "https://example.com/doc"))
-        emit(AskChunk.Done())
-    }
-}
-```
-
-**Import-resolution sanity check.** All five cross-package types (`OrchestratorProperties`, `OrchestratorClient`, `AskChunk`, `UserContext`, `DevOnlyBean`) are imported by fully qualified name. If a previous unit places any of them in a different package, update the import lines here verbatim — Kotlin will not silently fall through to an alternate package.
-
 #### Step G — Commit pattern
 
-Per existing TDD discipline. **Mock-orchestrator generation MUST come before the gate tests reference it** (commits 1-2 below), otherwise phase 03 fails to compile.
+Per existing TDD discipline. **Order matches the step order above.** Steps A–B set up the meta-annotation and properties; Step C generates the mock that subsequent tests reference; Steps D–F add the tests that depend on it. Land commits in this order or the tree will not compile mid-sequence.
 
-1. `feat(rag-be): MockOrchestratorClient + DevOnlyBean meta-annotation`
-2. `feat(rag-be): RagApplication scaffold (RagApplication.kt + scanBasePackages alignment)` — only if missing from earlier units
-3. `test(rag-be): DevDoubleClasspathScanTest red`
-4. `test(rag-be): DevDoubleClasspathScanTest green`
-5. `test(rag-be): DevDoubleGateTest (Spring slice) red`
-6. `test(rag-be): DevDoubleGateTest (Spring slice) green`
-7. `test(rag-be): JwtTestKit + WireMock JWKS publisher`
-8. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest red`
-9. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest green`
-10. `test(rag-be): SecurityBeansPresentTest (boot-time scan-root sanity)`
+1. `feat(rag-be): @DevOnlyBean meta-annotation` *(Step A)*
+2. `feat(rag-be): app.dev-doubles.enabled + app.entra.* properties` *(Step B)*
+3. `feat(rag-be): MockOrchestratorClient (gated by @DevOnlyBean)` *(Step C — MUST land before Steps D/F tests reference it)*
+4. `test(rag-be): DevDoubleClasspathScanTest red` *(Step D)*
+5. `test(rag-be): DevDoubleClasspathScanTest green` *(Step D)*
+6. `test(rag-be): DevDoubleGateTest (Spring slice) red` *(Step D)*
+7. `test(rag-be): DevDoubleGateTest (Spring slice) green` *(Step D)*
+8. `test(rag-be): SecurityBeansPresentTest (boot-time scan-root sanity)` *(Step D)*
+9. `feat(rag-be): SecurityConfig WebFlux OBO JWT (jwks-uri, aud, iss)` *(Step E)*
+10. `test(rag-be): JwtTestKit + WireMock JWKS publisher` *(Step F)*
+11. `test(rag-be): OboValidationTest red` *(Step F)*
+12. `test(rag-be): OboValidationTest green` *(Step F)*
 
 #### Step H — Verification (this unit fails the build when…)
 
