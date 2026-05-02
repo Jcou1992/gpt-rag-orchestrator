@@ -159,6 +159,7 @@ After each unit:
 - `src/main/resources/application.yml` (add `app.dev-doubles.enabled` + `app.entra.*` properties)
 - `src/test/kotlin/com/example/config/DevDoubleGateTest.kt` (Spring slice — gating-misfire layer)
 - `src/test/kotlin/com/example/config/DevDoubleClasspathScanTest.kt` (static classpath scan — load-bearing layer)
+- `src/test/kotlin/com/example/_devdoublescantestfixtures/MockSyntheticDouble.kt` (test-only fixture proving the scanner pipeline finds dev-double-named classes — regression guard for iteration-2 anchor bug)
 - `src/test/kotlin/com/example/security/JwtTestKit.kt` (deterministic JWT/JWKS fixture builder)
 - `src/test/kotlin/com/example/security/OboValidationTest.kt` (WebFlux + WebTestClient + WireMock)
 
@@ -370,16 +371,24 @@ class DevDoubleClasspathScanTest {
     private val productionBasePackage = "com.example"
 
     /**
-     * Allow-list of class simple-name regex matches that are NOT dev doubles.
-     * Add an entry here ONLY with a one-line justification. The regex check
-     * is defense-in-depth; if you allow-list aggressively you weaken the gate.
+     * Allow-list of class simple-names that match the dev-double regex but
+     * are NOT dev doubles. Add an entry here ONLY with a one-line
+     * justification. The regex check is defense-in-depth; aggressive
+     * allow-listing weakens the gate.
      */
     private val allowList: Set<String> = setOf(
-        // Example justification format: ClassName -> "why it matches but is not a dev double"
-        // "MockingjayController" to "real controller named after the book, not a test double",
-    ).map { it }.toSet()
+        // "MockingjayController",  // real controller named after the book, not a test double
+    )
 
-    /** Java/Kotlin simple-name regex — same as DevDoubleGateTest. */
+    /**
+     * Simple-name regex — anchored to the start of the class simple name.
+     * NOTE: this pattern is anchored (^...) and applied AFTER `substringAfterLast('.')`
+     * extracts the simple name. Do NOT interpolate this Pattern object back into
+     * a fully-qualified-name regex (e.g. `".*\\.($devDoubleNamePattern).*"`) — the
+     * `^` anchor cannot match after a package dot, and the resulting filter would
+     * match zero classes (vacuous-pass regression). The classpath scanner uses
+     * a separate match-everything filter; the simple-name match runs in Kotlin.
+     */
     private val devDoubleNamePattern: Pattern = Pattern.compile(
         "^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)",
         Pattern.CASE_INSENSITIVE,
@@ -387,10 +396,13 @@ class DevDoubleClasspathScanTest {
 
     @Test
     fun `every production class matching the dev-double name regex carries @DevOnlyBean`() {
-        // useDefaultFilters = false: we provide our own include filter via regex.
+        // useDefaultFilters = false: we control filtering. The include filter matches
+        // every candidate (.*) — we then filter by simple name in Kotlin using
+        // devDoubleNamePattern, which is correctly anchored against the simple name.
+        // This avoids the iteration-2 bug where interpolating the anchored pattern
+        // into a FQCN regex produced a vacuous match-zero filter.
         val scanner = ClassPathScanningCandidateComponentProvider(false).apply {
-            // Match any class whose FQCN simple name starts with a dev-double prefix.
-            addIncludeFilter(RegexPatternTypeFilter(Pattern.compile(".*\\.($devDoubleNamePattern).*")))
+            addIncludeFilter(RegexPatternTypeFilter(Pattern.compile(".*")))
         }
 
         val ungated: List<String> = scanner.findCandidateComponents(productionBasePackage)
@@ -400,9 +412,9 @@ class DevDoubleClasspathScanTest {
                 devDoubleNamePattern.matcher(simpleName).find() && simpleName !in allowList
             }
             .filter { fqcn ->
-                // Must NOT carry @DevOnlyBean (class-level). @Bean-method-level DevOnlyBean is
-                // also valid; this scan errs on the side of class-level check because methods are
-                // not exposed by ClassPathScanningCandidateComponentProvider.
+                // Must NOT carry @DevOnlyBean (class-level). @Bean-method-level
+                // markers are also valid; the Spring slice (DevDoubleGateTest)
+                // catches that case. This scan focuses on class-level coverage.
                 val cls = ClassUtils.forName(fqcn, javaClass.classLoader)
                 cls.getAnnotation(DevOnlyBean::class.java) == null
             }
@@ -417,7 +429,83 @@ class DevDoubleClasspathScanTest {
             )
             .isEmpty()
     }
+
+    @Test
+    fun `dev-double name regex matches expected positives and rejects negatives (iteration-2 anchor regression guard)`() {
+        // Self-test of the simple-name pattern. Pinned matrix prevents a future
+        // refactor from re-introducing the iteration-2 vacuous-pass bug where the
+        // anchored pattern was interpolated into a FQCN regex and matched nothing.
+        val positives = listOf(
+            "MockOrchestratorClient", "FakeAuthClient", "SpyEventBus",
+            "InMemoryUserRepository", "DummyMetricsSink", "NoopProgressReporter",
+            "StubFeatureFlagSource", "TestDoubleConversationStore",
+            "mockServiceFactory",      // case-insensitive
+        )
+        val negatives = listOf(
+            "RagController", "SecurityConfig", "OrchestratorClient",
+            "OrchestratorMockingFactory",  // does NOT start with dev-double prefix
+            "RealMockProvider",             // ditto
+            "DataMockingHelper",            // ditto — anchor must be at start
+        )
+        for (simple in positives) {
+            assertThat(devDoubleNamePattern.matcher(simple).find())
+                .withFailMessage("regex must match dev-double simple name: %s", simple)
+                .isTrue
+        }
+        for (simple in negatives) {
+            assertThat(devDoubleNamePattern.matcher(simple).find())
+                .withFailMessage("regex must NOT match non-dev-double simple name: %s", simple)
+                .isFalse
+        }
+    }
+
+    @Test
+    fun `classpath scanner returns at least the known-ungated synthetic dev-double when no @DevOnlyBean is present (regression for filter-anchor bug)`() {
+        // Self-test of the scanner pipeline. Constructs the same scanner shape
+        // as the production check and runs it against a known package containing
+        // a synthetic ungated dev-double class committed under test fixtures.
+        // If this returns an empty list, the filter regex is broken and the
+        // load-bearing layer is vacuous — same regression class Codex flagged in
+        // iteration 2. (Add the synthetic fixture under
+        // src/test/kotlin/com/example/_devdoublescantestfixtures/MockSyntheticDouble.kt
+        // — a class named `MockSyntheticDouble` with NO @DevOnlyBean annotation.
+        // The fixture lives under the test tree only, NOT production, so it does
+        // not trigger the production check above.)
+        val fixturePackage = "com.example._devdoublescantestfixtures"
+        val scanner = ClassPathScanningCandidateComponentProvider(false).apply {
+            addIncludeFilter(RegexPatternTypeFilter(Pattern.compile(".*")))
+        }
+        val matches: List<String> = scanner.findCandidateComponents(fixturePackage)
+            .mapNotNull { bd -> bd.beanClassName }
+            .filter { fqcn -> devDoubleNamePattern.matcher(fqcn.substringAfterLast('.')).find() }
+
+        assertThat(matches)
+            .withFailMessage(
+                "Scanner regression: expected to find MockSyntheticDouble fixture " +
+                    "in $fixturePackage but found nothing. Either the fixture is missing " +
+                    "or the include filter is broken (re-check iteration 2 anchor bug).",
+            )
+            .anyMatch { it.endsWith(".MockSyntheticDouble") }
+    }
 }
+```
+
+**Required test fixture for the regression test (commit alongside `DevDoubleClasspathScanTest.kt`):**
+
+```kotlin
+// src/test/kotlin/com/example/_devdoublescantestfixtures/MockSyntheticDouble.kt
+package com.example._devdoublescantestfixtures
+
+import org.springframework.stereotype.Component
+
+/**
+ * Test-tree fixture only — exists to prove `DevDoubleClasspathScanTest`'s scanner
+ * pipeline actually finds dev-double-named classes. NO @DevOnlyBean marker — that
+ * is intentional. This class lives under the test tree, NOT production, so it does
+ * NOT trigger the production gate. Do not move it under src/main.
+ */
+@Component
+class MockSyntheticDouble
 ```
 
 **Failure modes the two tests catch together:**
@@ -626,6 +714,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment
+import org.springframework.http.MediaType
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.reactive.server.WebTestClient
@@ -638,6 +727,17 @@ class OboValidationTest {
     companion object {
         private const val AUDIENCE = "api://gpt-rag-orchestrator-test"
         private const val ISSUER   = "https://login.test.example/v2.0"
+
+        // The documented endpoint is POST /api/rag/ask (per INTEGRATION_PLAN §3.1
+        // and the playbook's RagController in Unit 7). All six OBO assertions
+        // below MUST exercise that exact verb + path; using GET would test a
+        // route that does not exist and either return 404/405 or pressure
+        // implementers to add a dummy GET handler — both weaken the gate.
+        private val askRequestBody = mapOf(
+            "ask" to "test prompt for OBO validation",
+            "conversationId" to "test-conversation-1",
+            "userContext" to emptyMap<String, Any>(),
+        )
 
         private val wireMock: WireMockServer = WireMockServer(wireMockConfig().dynamicPort())
 
@@ -664,47 +764,58 @@ class OboValidationTest {
             registry.add("app.entra.jwks-uri") { "${wireMock.baseUrl()}/.well-known/jwks.json" }
             registry.add("app.entra.audience") { AUDIENCE }
             registry.add("app.entra.issuer")   { ISSUER }
+            // Activate MockOrchestratorClient so a valid token reaches a real handler
+            // that returns 200 with an SSE body — required for the valid-JWT case below.
+            // The dev-double gate (DevDoubleGateTest) is enforced in a different test
+            // class with this property unset; here we deliberately enable it so the
+            // OBO leg has a working downstream stub, isolating what this test asserts:
+            // "the auth filter accepts a real token and the request reaches the handler."
+            registry.add("app.dev-doubles.enabled") { "true" }
         }
     }
 
+    private fun postWithoutAuth() = webClient.post().uri("/api/rag/ask")
+        .contentType(MediaType.APPLICATION_JSON)
+        .accept(MediaType.TEXT_EVENT_STREAM)
+        .bodyValue(askRequestBody)
+
+    private fun postWithAuth(token: String) = postWithoutAuth()
+        .header("Authorization", "Bearer $token")
+
     @Test fun `no Authorization header returns 401`() {
-        webClient.get().uri("/api/rag/ask").exchange().expectStatus().isUnauthorized
+        postWithoutAuth().exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `malformed JWT returns 401`() {
-        webClient.get().uri("/api/rag/ask")
-            .header("Authorization", "Bearer ${JwtTestKit.MALFORMED}")
-            .exchange().expectStatus().isUnauthorized
+        postWithAuth(JwtTestKit.MALFORMED).exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `forged JWT signed by wrong key returns 401`() {
         // Structurally valid; signature verification against JWKS fails because the attacker
         // key is never published in publishedJwkSet().
         val token = JwtTestKit.forgedJwt(audience = AUDIENCE, issuer = ISSUER)
-        webClient.get().uri("/api/rag/ask")
-            .header("Authorization", "Bearer $token")
-            .exchange().expectStatus().isUnauthorized
+        postWithAuth(token).exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `JWT with wrong aud claim returns 401`() {
         val token = JwtTestKit.wrongAudienceJwt(expectedAudience = AUDIENCE, issuer = ISSUER)
-        webClient.get().uri("/api/rag/ask")
-            .header("Authorization", "Bearer $token")
-            .exchange().expectStatus().isUnauthorized
+        postWithAuth(token).exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `JWT with wrong iss claim returns 401`() {
         val token = JwtTestKit.wrongIssuerJwt(audience = AUDIENCE, expectedIssuer = ISSUER)
-        webClient.get().uri("/api/rag/ask")
-            .header("Authorization", "Bearer $token")
-            .exchange().expectStatus().isUnauthorized
+        postWithAuth(token).exchange().expectStatus().isUnauthorized
     }
 
-    @Test fun `valid JWT returns 200`() {
+    @Test fun `valid JWT reaches the POST handler successfully`() {
+        // With a valid token, the auth filter passes and the request reaches RagController.
+        // MockOrchestratorClient (gated on app.dev-doubles.enabled=true above) provides the
+        // 200 SSE response body. If the controller stack changes (or the mock is removed),
+        // tighten this assertion accordingly — but it MUST NOT be 401/403.
         val token = JwtTestKit.validJwt(audience = AUDIENCE, issuer = ISSUER)
-        webClient.get().uri("/api/rag/ask")
-            .header("Authorization", "Bearer $token")
-            .exchange().expectStatus().isOk
+        postWithAuth(token).exchange()
+            .expectStatus().isOk
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
     }
 }
 ```
