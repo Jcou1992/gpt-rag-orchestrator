@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Jcou1992/gpt-rag-orchestrator/.junie/contracts/sse-events.schema.json",
+  "title": "SSE Event Envelope",
+  "description": "Normalized SSE events emitted by the Spring Boot proxy after rewrapping the orchestrator's raw text stream into JSON. Canonical contract surface — do not restate inline in playbooks or guides (R5).",
+
+  "$defs": {
+    "ConversationIdEvent": {
+      "type": "object",
+      "description": "Conversation identifier. Emitted at most once, before the first chunk. Carries the persistent conversation id used for follow-up requests. JSON Schema cannot express stream ordering structurally; this constraint is enforced by integration tests, not by the schema.",
+      "properties": {
+        "type": { "const": "conversationId" },
+        "value": {
+          "type": "string",
+          "description": "Conversation id (typically a UUID-shaped opaque token). Required."
+        }
+      },
+      "required": ["type", "value"],
+      "additionalProperties": false
+    },
+
+    "ChunkEvent": {
+      "type": "object",
+      "description": "Streaming text fragment of the assistant's response. Emitted zero or more times in order between conversationId and done.",
+      "properties": {
+        "type": { "const": "chunk" },
+        "text": {
+          "type": "string",
+          "description": "Text fragment. May be empty but must be present."
+        }
+      },
+      "required": ["type", "text"],
+      "additionalProperties": false
+    },
+
+    "CitationEvent": {
+      "type": "object",
+      "description": "Citation surfaced by the orchestrator (e.g., from Bing Grounding or AI Search). Emitted zero or more times, interleaved with chunk events.",
+      "properties": {
+        "type": { "const": "citation" },
+        "title": {
+          "type": "string",
+          "description": "Citation display title."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Citation URL (must be a syntactically valid URI)."
+        }
+      },
+      "required": ["type", "title", "url"],
+      "additionalProperties": false
+    },
+
+    "DoneEvent": {
+      "type": "object",
+      "description": "Stream terminator. Emitted exactly once at the end of a successful stream. No payload fields.",
+      "properties": {
+        "type": { "const": "done" }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+
+    "ErrorEvent": {
+      "type": "object",
+      "description": "Terminal failure event. Emitted at most once, replacing 'done'. Carries a stable error code and a human-readable message.",
+      "properties": {
+        "type": { "const": "error" },
+        "code": {
+          "type": "string",
+          "description": "Stable error code (e.g., UPSTREAM_TIMEOUT, AUTH_DENIED). Implementations should treat unknown codes as opaque."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message. May contain sanitized diagnostic info."
+        }
+      },
+      "required": ["type", "code", "message"],
+      "additionalProperties": false
+    }
+  },
+
+  "oneOf": [
+    { "$ref": "#/$defs/ConversationIdEvent" },
+    { "$ref": "#/$defs/ChunkEvent" },
+    { "$ref": "#/$defs/CitationEvent" },
+    { "$ref": "#/$defs/DoneEvent" },
+    { "$ref": "#/$defs/ErrorEvent" }
+  ]
+}

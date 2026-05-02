@@ -150,20 +150,12 @@ Request:
 ```
 
 Response SSE (JSON envelope normalizado por Spring):
-```
-data: {"type":"conversationId","value":"c-123"}
 
-data: {"type":"chunk","text":"La política de devoluciones..."}
+Examples: see [.junie/contracts/sse-events.examples.json](.junie/contracts/sse-events.examples.json) — each entry is a single SSE `data:` payload; the contract test (per `.junie/playbooks/04-contract-tests.md`) validates every example against the canonical schema at [.junie/contracts/sse-events.schema.json](.junie/contracts/sse-events.schema.json).
 
-data: {"type":"citation","title":"Manual v2","url":"https://..."}
+The 5 event types are: `conversationId` (emitted at most once, before first chunk), `chunk` (zero or more streaming text fragments), `citation` (zero or more citations interleaved with chunks), `done` (terminator on success), `error` (terminator on failure, replaces `done`).
 
-data: {"type":"done"}
-```
-
-Errores:
-```
-data: {"type":"error","code":"UPSTREAM_TIMEOUT","message":"..."}
-```
+Do not restate event payloads inline in this file — the canonical schema and the sidecar fixture are the source of truth (R5/R10).
 
 ### 3.2 Spring Boot → Orchestrator
 
