@@ -3,6 +3,7 @@ local/
 .local/
 .vscode/
 .claude/
+graphify-out/
 
 # Evaluations
 eval-input.jsonl 
