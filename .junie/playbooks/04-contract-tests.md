@@ -247,19 +247,18 @@ export async function getToken() {
 // `@/services/auth` whenever Vite is NOT building in `development` or
 // `test` mode. There is no runtime catch-and-substitute fallback anywhere
 // in this module's call sites — getToken() failure throws and surfaces as
-// a sanitized user-visible error (see Step 6 for MSAL hardening).
-import { msalInstance } from '../auth/msalConfig.js';
+// a sanitized user-visible error.
+//
+// CRITICAL: this module MUST delegate to the hardened getToken in
+// msalConfig.js (Step 6). Re-implementing acquireTokenSilent here would
+// bypass the InteractionRequiredAuthError redirect, the sanitized error
+// rendering, and the correlation-ID-only logging — all R11/SC6 controls.
+// The single-source pattern keeps the auth boundary's hardening in exactly
+// one file; auth.js is just the alias adapter.
+import { getToken as hardenedGetToken } from '../auth/msalConfig.js';
 
 export async function getToken() {
-  const accounts = msalInstance.getAllAccounts();
-  if (accounts.length === 0) {
-    throw new Error('AUTH_NO_ACCOUNT');
-  }
-  const result = await msalInstance.acquireTokenSilent({
-    account: accounts[0],
-    scopes: [import.meta.env.VITE_API_SCOPE],
-  });
-  return result.accessToken;
+  return hardenedGetToken([import.meta.env.VITE_API_SCOPE]);
 }
 ```
 
@@ -552,7 +551,7 @@ Visit `http://localhost:5173`, submit a query. Backend returns fake SSE, fronten
 **Frontend (development mode):**
 - The Vite alias in `vite.config.js` resolves `@/services/auth` to `auth-stub.js` for `mode in ['development', 'test']` only.
 - The dev stub returns a fake JWT held in a module-scoped variable (no localStorage). Reloading the page clears it; this is intentional.
-- Console emits `[AUTH-STUB ACTIVE] true` so misconfigured environments self-announce.
+- Console emits `[AUTH-STUB ACTIVE] __JUNIE_DEV_AUTH_STUB_SENTINEL_a3f7c291_4b2e_48d1_9c6a_77e0f3b82d14__` (the sentinel string the leak test greps for) so misconfigured environments self-announce. The sentinel argument is what pins the export into the bundle for tree-shaking-resistance — emitting just `true` would let Rollup drop the export and silently regress the leak test.
 
 **Frontend (production mode):**
 - The alias resolves to `auth.js` (real MSAL). There is no runtime catch-and-substitute fallback in `ragApi.js`. `getToken()` failures throw and surface via the sanitized error rendering in `msalConfig.js` (Step 6).

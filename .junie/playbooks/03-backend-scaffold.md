@@ -1171,7 +1171,7 @@ After all 9 units, print:
 ```
 ✅ BACKEND SCAFFOLD COMPLETE
 
-Tests: 35/35 passed (9 units × ~3–4 assertions each)
+Tests: 39/39 passed (Units 1–8 + Unit 9b dev-double/OBO; Unit 9 MCP optional adds more)
 Integration tests: (if testcontainers opted) 5/5 passed
 Lint: 0 errors
 Build: ✅ successful
@@ -1216,9 +1216,10 @@ Append memory checkpoint:
 | 6. SecurityConfig | 3/3 | ✅ |
 | 7. RagController | 3/3 | ✅ |
 | 8. ToolController | 3/3 | ✅ |
+| 9b. dev-double gate + OBO (Step D/F + classpath scan + security beans) | 15/15 | ✅ |
 | 9. (MCP) | — | <skipped/✅> |
 
-**Total:** 32/32 unit tests passed
+**Total:** 39/39 unit tests passed (Units 1–8: 24; Unit 9b: 15; Unit 9 MCP optional)
 **Integration tests:** (if testcontainers) 5/5 passed
 
 **Docs:** `docs/backend-openapi.json` generated
