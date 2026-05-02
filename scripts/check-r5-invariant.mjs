@@ -150,7 +150,7 @@ if (violations.length === 0) {
   process.exit(0);
 }
 
-console.error('R5 invariant: VIOLATIONS FOUND');
+console.error(`R5 invariant: FAIL — ${violations.length} violation(s) in ${files.length} playbook file(s).`);
 console.error('A fenced ```json block contains both `oneOf` and `additionalProperties`.');
 console.error('That looks like an inline restatement of the canonical SSE schema.');
 console.error('Canonical source: .junie/contracts/sse-events.schema.json');

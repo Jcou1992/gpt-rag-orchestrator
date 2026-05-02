@@ -1,14 +1,18 @@
 # Auth-policy invariant test fixture — INTENTIONALLY BAD
 
-This file contains the v3 leak-class patterns the auth boundary forbids:
-generic dummy-token fallback in `auth.js`, catch-and-substitute in
-`ragApi.js`, and obsolete env-var names. `check-auth-policy.mjs` must
-reject every line below.
+This file contains EVERY pattern the auth boundary forbids. The harness
+asserts each forbidden token is surfaced by `check-auth-policy.mjs`, so
+every entry in the script's FORBIDDEN + FORBIDDEN_REGEX lists MUST have
+a corresponding line below. Removing a rule from the script silently is
+caught by the harness because that rule's sentinel disappears from the
+output.
 
-## Forbidden auth patterns
+## Forbidden auth patterns (substring class)
 
 Generate `src/services/auth.js` with mocked getToken returning a dummy JWT
-for local dev. Fall back to `auth-stub-token` if MSAL fails.
+for local dev. Fall back to `auth-stub-token` if MSAL fails. The dummy-token
+fallback is the v3 leak class. Other narrative variants: `mocked getToken`,
+mocked `getToken` (backticked), mock getToken (imperative).
 
 ```javascript
 import { msalInstance } from '../auth/msalConfig.js';
@@ -18,6 +22,12 @@ export async function getToken() {
     .then((r) => r.accessToken)
     .catch(() => 'STUB-JWT');
 }
+
+// Catch-substitute variants the v4 invariant forbids:
+const a = p().catch(() => 'stub-lower');
+const b = p().catch(() => "STUB-double");
+const c = p().catch(() => 'auth-stub-1');
+const d = p().catch(() => "auth-stub-2");
 ```
 
 ## Forbidden env-var names

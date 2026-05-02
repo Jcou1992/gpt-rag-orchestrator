@@ -28,24 +28,75 @@ import { existsSync } from 'node:fs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..', '..');
 
+// Each case asserts (a) script exits non-zero, (b) violation count matches
+// the expected count exactly, and (c) every per-rule "sentinel substring"
+// appears at least once in the output.
+//
+// Why both checks? Sentinel substrings can overlap (e.g., the stack
+// invariant's `import ...MockMvc` is a prefix of `import ...MockMvcRequest
+// Builders`), so a removed rule may still appear to "match" a substring
+// from a different rule. The exact violation-count assertion is the
+// real guard against partial rule removal: removing any rule drops the
+// count by at least one. The sentinel list is the additional guard
+// against a script that exits non-zero for an unrelated reason.
+//
+// `expectedViolations` is the count of fixture lines that should trigger
+// the script. Update this when you add or remove a forbidden entry from
+// the corresponding fixture file.
 const cases = [
   {
     name: 'R5 (inline-schema)',
     script: 'scripts/check-r5-invariant.mjs',
     fixtureDir: resolve(__dirname, 'fixtures/bad-r5'),
-    sentinel: 'oneOf',  // R5 violation message includes the offending key set
+    expectedViolations: 1,                  // one inline-schema block
+    sentinels: ['oneOf'],
   },
   {
     name: 'stack (servlet imports)',
     script: 'scripts/check-stack-invariant.mjs',
     fixtureDir: resolve(__dirname, 'fixtures/bad-stack'),
-    sentinel: 'HttpSecurity',
+    // 12 entries in check-stack-invariant.mjs FORBIDDEN; fixture covers
+    // all 12 (plus one extra @AutoConfigureMockMvc usage line so the
+    // annotation rule fires alongside the import rule).
+    expectedViolations: 13,
+    sentinels: [
+      'HttpSecurity',
+      'SecurityFilterChain',
+      'EnableWebSecurity',
+      'JwtDecoder',
+      'NimbusJwtDecoder',
+      'MockMvc',
+      'AutoConfigureMockMvc',
+      'MockMvcRequestBuilders',
+      'MockMvcResultMatchers',
+      'jakarta.servlet',
+      'javax.servlet',
+    ],
   },
   {
     name: 'auth-policy (dummy JWT + catch-substitute + obsolete env vars)',
     script: 'scripts/check-auth-policy.mjs',
     fixtureDir: resolve(__dirname, 'fixtures/bad-auth'),
-    sentinel: 'STUB-JWT',
+    // Set during the harness build-out; re-confirmed after every rule
+    // change. Maintains the same property: removing a rule drops the
+    // count and the harness fails.
+    expectedViolations: 16,                 // 14 substring + 1 regex × occurrences in fixture
+    sentinels: [
+      'STUB-JWT',
+      'auth-stub-token',
+      'dummy JWT',
+      'dummy-token',
+      'mocked getToken',
+      'mock getToken',
+      ".catch(() => 'STUB",
+      ".catch(() => 'stub",
+      '.catch(() => "STUB',
+      ".catch(() => 'auth-stub",
+      '.catch(() => "auth-stub',
+      'VITE_MSAL_TENANT_ID',
+      'VITE_MSAL_API_SCOPE',
+      'RAG_API_URL',
+    ],
   },
 ];
 
@@ -95,16 +146,46 @@ for (const c of cases) {
   }
 
   const combined = (result.stderr || '') + (result.stdout || '');
-  if (!combined.includes(c.sentinel)) {
-    console.error(`[harness] FAIL: ${c.name} — script exited non-zero but stderr+stdout does NOT contain sentinel "${c.sentinel}".`);
-    console.error(`         The script may have failed for an unrelated reason (launch error, missing dep, etc.) rather than rejecting the known-bad fixture.`);
-    console.error(`         Got:`);
-    console.error(combined.split('\n').slice(0, 10).map((l) => '            ' + l).join('\n'));
+
+  // Parse the violation count from the script's `FAIL — N violation(s)`
+  // line. Each invariant script emits this exact phrasing on its first
+  // error line; pinning to it avoids regex drift on per-rule wording.
+  const countMatch = combined.match(/FAIL[^\n]*?(\d+)\s+violation\(s\)/i);
+  if (!countMatch) {
+    console.error(`[harness] FAIL: ${c.name} — could not parse violation count from output.`);
+    console.error(`         Expected line matching /FAIL[^\\n]*?(\\d+)\\s+violation\\(s\\)/.`);
+    console.error(`         Output (first 20 lines):`);
+    console.error(combined.split('\n').slice(0, 20).map((l) => '            ' + l).join('\n'));
+    failures++;
+    continue;
+  }
+  const actualViolations = parseInt(countMatch[1], 10);
+  if (c.expectedViolations >= 0 && actualViolations !== c.expectedViolations) {
+    console.error(`[harness] FAIL: ${c.name} — violation count mismatch.`);
+    console.error(`         Expected: ${c.expectedViolations}`);
+    console.error(`         Got:      ${actualViolations}`);
+    console.error(`         A drop in count means a forbidden rule was removed or disabled.`);
+    console.error('         A rise means a new fixture line lacks an `expectedViolations` bump.');
+    console.error(`         Output (first 30 lines):`);
+    console.error(combined.split('\n').slice(0, 30).map((l) => '            ' + l).join('\n'));
     failures++;
     continue;
   }
 
-  console.log(`[harness] PASS: ${c.name} — script correctly rejected fixture (sentinel "${c.sentinel}" present).`);
+  // Sentinel-substring check. Catches scripts that exit non-zero for an
+  // unrelated reason (launch error, malformed fixture) or that produce
+  // the right count via redirection to a different set of rules.
+  const missing = c.sentinels.filter((s) => !combined.includes(s));
+  if (missing.length > 0) {
+    console.error(`[harness] FAIL: ${c.name} — ${missing.length} of ${c.sentinels.length} expected sentinels were NOT in output.`);
+    console.error(`         Missing sentinels:`);
+    for (const s of missing) console.error(`           - "${s}"`);
+    failures++;
+    continue;
+  }
+
+  const countNote = c.expectedViolations >= 0 ? `${actualViolations}/${c.expectedViolations}` : `${actualViolations}`;
+  console.log(`[harness] PASS: ${c.name} — fixture rejected correctly (violations: ${countNote}; ${c.sentinels.length} sentinels present).`);
 }
 
 if (failures > 0) {
