@@ -143,12 +143,19 @@ function scanFile(file) {
     if (STANDALONE_ANCHOR_RE.test(line.trim())) continue;
 
     // Helper: resolve allowlist by walking backwards over blank lines to
-    // the nearest non-blank line, looking for an anchor marker.
+    // the nearest non-blank line. The previous line must be a STANDALONE
+    // anchor (entire trimmed content is the marker, nothing else) — a
+    // mixed line like `<!-- auth-policy-allow:foo --> harmless prose`
+    // is rejected because it would otherwise let an anchor resolve for
+    // the line *after* it without any explicit allowlist intent.
+    // Round-29 closed this drift class.
     const isAllowed = (label) => {
       for (let k = i - 1; k >= 0; k--) {
         const prev = lines[k];
         if (prev.trim() === '') continue;
-        const m = prev.match(ALLOW_ANCHOR_RE);
+        const trimmed = prev.trim();
+        if (!STANDALONE_ANCHOR_RE.test(trimmed)) return false;
+        const m = trimmed.match(ALLOW_ANCHOR_RE);
         if (m && ALLOWLIST.has(`${m[1]}:${label}`)) return true;
         return false;
       }
