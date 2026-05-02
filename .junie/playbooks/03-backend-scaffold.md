@@ -719,6 +719,10 @@ import org.springframework.security.web.server.SecurityWebFilterChain
         "app.entra.jwks-uri=http://localhost:0/jwks",
         "app.entra.audience=api://placeholder",
         "app.entra.issuer=https://placeholder/",
+        // CORS allow-list — required by SecurityConfig's CorsConfigurationSource
+        // bean. Without it the constructor injection fails and the context
+        // refuses to start before any assertion runs.
+        "app.cors.allowed-origins=http://localhost:5173",
     ],
 )
 class SecurityBeansPresentTest {

@@ -154,6 +154,14 @@ The fixture validates because Step 1 copied both files from the same canonical p
 app:
   dev-doubles:
     enabled: true
+  cors:
+    # Default localhost allow-list for the mock profile — dev convenience
+    # only. The production application.yml uses ${APP_CORS_ALLOWED_ORIGINS}
+    # with no fallback (fail-closed). Keep the explicit override here so
+    # `./gradlew bootRun --args='--spring.profiles.active=mock'` starts
+    # without requiring the env var; production deploys never load this
+    # profile.
+    allowed-origins: http://localhost:5173
 
 orchestrator:
   url: http://localhost:8080  # ignored when MockOrchestratorClient is registered
@@ -907,15 +915,16 @@ curl -X POST http://<orchestrator-host>:8080/orchestrator \
 - Backend's CORS config missing or incorrect.
 
 **To fix:**
-- Check `SecurityConfig.kt` has CORS configured for your frontend origin.
-- If dev/prod mismatch, add to `application-dev.yml`:
+- Check `SecurityConfig.kt` has CORS configured for your frontend origin. The scaffolded `SecurityConfig.kt` reads `app.cors.allowed-origins` (NOT Spring's `spring.web.cors.*` namespace — Spring's defaults are not what the custom `corsConfigurationSource()` consults).
+- If dev/prod mismatch, set the env var or YAML property:
 \`\`\`yaml
-spring:
-  web:
-    cors:
-      allowed-origins: http://localhost:5173
-      allowed-methods: GET,POST,OPTIONS
+# application.yml or application-dev.yml — must match SecurityConfig binding.
+app:
+  cors:
+    allowed-origins: http://localhost:5173
 \`\`\`
+- Or, in production, set `APP_CORS_ALLOWED_ORIGINS=https://your-frontend.example.com` (the env-var form bound by `${APP_CORS_ALLOWED_ORIGINS}` in `application.yml`).
+- Methods/headers are configured in `SecurityConfig.corsConfigurationSource()` (`GET`, `POST`, `OPTIONS`; `Authorization`, `Content-Type`, `Accept`); edit there if your scenario needs more.
 
 ---
 
