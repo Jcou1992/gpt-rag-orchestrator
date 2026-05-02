@@ -128,46 +128,20 @@ The fixture validates because Step 1 copied both files from the same canonical p
 
 ---
 
-## Step 3 — Mock orchestrator for offline dev (single dev-double gate)
+## Step 3 — Mock orchestrator for offline dev (configure dev profile only)
 
-Many developers may not have the RAG orchestrator running locally. Generate a **fallback mock** — but it MUST go through the same `@DevOnlyBean` / `app.dev-doubles.enabled` gate defined in playbook 03 Unit 9b. There is exactly one path to activate any dev/test double across the scaffolded backend; do not introduce a parallel property like `orchestrator.mock-enabled`.
+`MockOrchestratorClient.kt` is generated in **playbook 03 Unit 9b Step F** (the backend phase, before this contract-tests phase). This step does not regenerate the class — emitting it here would create a phase-ordering compile error, since `DevDoubleGateTest` in phase 03 Unit 9b needs `MockOrchestratorClient` on the classpath when it runs. Instead, this step:
 
-**Why one gate.** A second activation property creates a second way to ship fake responses to production. `DevDoubleGateTest` (playbook 03 Unit 9b) is built around the assumption that `app.dev-doubles.enabled` is the only switch — adding `orchestrator.mock-enabled` lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied. Do not regress this invariant.
+1. Confirms the mock was generated correctly in phase 03 (path: `backend/src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt`, gated by `@DevOnlyBean`).
+2. Generates `application-mock.yml` to flip the single dev-double gate into the `mock` Spring profile.
+3. Documents the dev runner invocation.
 
-**`backend/src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt`:**
-
-```kotlin
-package com.example.rag.dev
-
-import com.example.rag.config.annotations.DevOnlyBean   // composes app.dev-doubles.enabled gate
-import org.springframework.stereotype.Component
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-
-@DevOnlyBean   // load-bearing: gate cascades from this meta-annotation. NO standalone property.
-@Component
-class MockOrchestratorClient(
-    val properties: OrchestratorProperties
-) : OrchestratorClient {
-
-    override fun askOrchestrator(
-        ask: String,
-        conversationId: String,
-        userContext: UserContext
-    ): Flow<AskChunk> = flow {
-        emit(AskChunk.Chunk("This is a mocked response to: \"$ask\""))
-        delay(100)
-        emit(AskChunk.Citation("Sample Doc", "https://example.com/doc"))
-        emit(AskChunk.Done())
-    }
-}
-```
+**Single-gate invariant (read first).** There is exactly one path to activate any dev/test double across the scaffolded backend: `app.dev-doubles.enabled=true`. Do not introduce parallel properties like `orchestrator.mock-enabled`. `DevDoubleGateTest` (playbook 03 Unit 9b Step C) enforces this; a parallel switch creates a second activation path that bypasses the gate and lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied.
 
 **`application-mock.yml`** — single property only:
 
 ```yaml
-# Activates the dev-double gate from playbook 03 Unit 9b.
+# Activates the dev-double gate established in playbook 03 Unit 9b.
 # This is the ONLY property that activates dev doubles. Do not add orchestrator.mock-enabled
 # or any other parallel switch — DevDoubleGateTest enforces the single-gate invariant.
 app:
@@ -179,9 +153,7 @@ orchestrator:
   api-key: ${ORCHESTRATOR_API_KEY:mock-key}
 ```
 
-`DevDoubleGateTest` (playbook 03 Unit 9b Step C) MUST include `MockOrchestratorClient` in its scope:
-- Without `app.dev-doubles.enabled=true`: bean must NOT register (annotation check fails the build if it does).
-- The `MockOrchestrator*` simple class name also matches the regex `(?i)^(Mock|...)`, so the regex check provides defense-in-depth even if a future contributor forgets `@DevOnlyBean`.
+`DevDoubleGateTest` (playbook 03 Unit 9b Step C) already includes `MockOrchestratorClient` in its `withUserConfiguration(...)` list — no changes required from this phase.
 
 Print:
 ```

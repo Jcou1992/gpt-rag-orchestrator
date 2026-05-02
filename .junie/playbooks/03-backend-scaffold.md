@@ -165,6 +165,7 @@ After each unit:
 - `src/test/kotlin/com/example/rag/security/JwtTestKit.kt` (deterministic JWT/JWKS fixture builder)
 - `src/test/kotlin/com/example/rag/security/OboValidationTest.kt` (WebFlux + WebTestClient + WireMock)
 - `src/test/kotlin/com/example/rag/security/SecurityBeansPresentTest.kt` (boots the real `RagApplication` and asserts `SecurityWebFilterChain` + `ReactiveJwtDecoder` beans are registered — catches scan-root drift if anyone moves config outside `com.example.rag`)
+- `src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt` (the one dev double — referenced by `DevDoubleGateTest` and `OboValidationTest`; generated in this phase because both tests need it on the classpath when phase 03 runs)
 
 #### Step A — Define the `@DevOnlyBean` meta-annotation (load-bearing primary control)
 
@@ -891,19 +892,71 @@ class OboValidationTest {
 
 **No `TODO(...)` placeholders.** Every fixture is built deterministically from `JwtTestKit`. The forged path is signed by an in-memory keypair that is never published in the JWKS endpoint — `NimbusReactiveJwtDecoder` cannot resolve a matching `kid`/key and rejects the token, exactly as production would reject an attacker-signed JWT.
 
-#### Step F — Commit pattern
+#### Step F — Generate `MockOrchestratorClient.kt` (the one dev double the gate tests reference)
 
-Per existing TDD discipline:
+`DevDoubleGateTest` (Step C) lists `MockOrchestratorClient::class.java` in `withUserConfiguration(...)`, and `OboValidationTest` (Step E) sets `app.dev-doubles.enabled=true` so this mock is registered when a valid JWT is exercised. Both tests are generated in this unit, in this phase. Therefore the mock class itself MUST be generated in this phase too — generating it later (e.g., in `04-contract-tests`) creates a compile-time ordering bug: phase-03 tests reference a phase-04 class that does not yet exist on the classpath.
 
-1. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleClasspathScanTest red`
-2. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleClasspathScanTest green`
-3. `test(rag-be): DevDoubleGateTest (Spring slice) red`
-4. `test(rag-be): DevDoubleGateTest (Spring slice) green`
-5. `test(rag-be): JwtTestKit + WireMock JWKS publisher`
-6. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest red`
-7. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest green`
+The mock implements the `OrchestratorClient` interface defined in earlier units of this playbook. **Every cross-package type used in the mock is imported explicitly** — bare names would silently fail to resolve in a different package and produce a non-compiling scaffold.
 
-#### Step G — Verification (this unit fails the build when…)
+```kotlin
+// src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt
+package com.example.rag.dev
+
+import com.example.rag.config.OrchestratorProperties             // configuration properties (Unit 5/6 output)
+import com.example.rag.config.annotations.DevOnlyBean             // gate marker (Step A)
+import com.example.rag.service.AskChunk                           // sealed class — emitted variants (Unit 7 output)
+import com.example.rag.service.OrchestratorClient                 // interface (Unit 7 output)
+import com.example.rag.web.dto.UserContext                        // request DTO field (Unit 4 output)
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import org.springframework.stereotype.Component
+
+/**
+ * Offline-dev fallback. Returns canned SSE chunks/citations/done events.
+ * Gated by @DevOnlyBean (composes @ConditionalOnProperty(app.dev-doubles.enabled,
+ * matchIfMissing = false)) so it CANNOT register in production by accident.
+ *
+ * Path is documented under playbook 04 Step 3, but the file itself lives here
+ * because phase-03 tests (DevDoubleGateTest, OboValidationTest) reference it.
+ */
+@DevOnlyBean
+@Component
+class MockOrchestratorClient(
+    val properties: OrchestratorProperties,
+) : OrchestratorClient {
+
+    override fun askOrchestrator(
+        ask: String,
+        conversationId: String,
+        userContext: UserContext,
+    ): Flow<AskChunk> = flow {
+        emit(AskChunk.Chunk("This is a mocked response to: \"$ask\""))
+        delay(100)
+        emit(AskChunk.Citation("Sample Doc", "https://example.com/doc"))
+        emit(AskChunk.Done())
+    }
+}
+```
+
+**Import-resolution sanity check.** All five cross-package types (`OrchestratorProperties`, `OrchestratorClient`, `AskChunk`, `UserContext`, `DevOnlyBean`) are imported by fully qualified name. If a previous unit places any of them in a different package, update the import lines here verbatim — Kotlin will not silently fall through to an alternate package.
+
+#### Step G — Commit pattern
+
+Per existing TDD discipline. **Mock-orchestrator generation MUST come before the gate tests reference it** (commits 1-2 below), otherwise phase 03 fails to compile.
+
+1. `feat(rag-be): MockOrchestratorClient + DevOnlyBean meta-annotation`
+2. `feat(rag-be): RagApplication scaffold (RagApplication.kt + scanBasePackages alignment)` — only if missing from earlier units
+3. `test(rag-be): DevDoubleClasspathScanTest red`
+4. `test(rag-be): DevDoubleClasspathScanTest green`
+5. `test(rag-be): DevDoubleGateTest (Spring slice) red`
+6. `test(rag-be): DevDoubleGateTest (Spring slice) green`
+7. `test(rag-be): JwtTestKit + WireMock JWKS publisher`
+8. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest red`
+9. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) reactive + OboValidationTest green`
+10. `test(rag-be): SecurityBeansPresentTest (boot-time scan-root sanity)`
+
+#### Step H — Verification (this unit fails the build when…)
 
 All three tests **fail the build** under the following conditions:
 
