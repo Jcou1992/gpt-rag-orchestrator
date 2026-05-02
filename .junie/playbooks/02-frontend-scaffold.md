@@ -125,6 +125,7 @@ After each unit:
 
 ## Step 3 — MSAL wiring (if opted in)
 
+<!-- auth-policy-allow:pb02-step3-no-dummy-token -->
 > **Auth policy is owned by playbook 04 Steps 4 + 6.** Phase 02 does NOT generate a dummy-JWT `auth.js` fallback. The hardened MSAL adapter (`auth.js` delegating to `msalConfig.js`'s `hardenedGetToken`) and the dev-only `auth-stub.js` (resolved by Vite alias only in `mode in ['development', 'test']`) are emitted in playbook 04. Generating a separate dummy-token `auth.js` here would leave a non-hardened module on the production code path that bypasses the R6/R6a/R8/R11 controls, and the leak test (which scans for the dev-stub sentinel only) would NOT catch it.
 
 If user chose **MSAL now** in preflight:
@@ -213,10 +214,13 @@ Low-level SSE parser.
 
 ## Environment variables
 
-- `VITE_RAG_API_URL` (default: `http://localhost:8080`) — backend URL
-- `VITE_MSAL_CLIENT_ID` (if MSAL wired) — Azure SPA ID
-- `VITE_MSAL_TENANT_ID` (if MSAL wired) — Azure tenant
-- `VITE_MSAL_API_SCOPE` (if MSAL wired) — backend scope
+The four MSAL vars below are validated at startup by `src/auth/msalConfig.js` (playbook 04 Step 6). All four must be set to non-placeholder values, otherwise the app halts at the config-error screen before mount. Names are exact — `VITE_MSAL_TENANT_ID` and `VITE_MSAL_API_SCOPE` are **not** valid; the validator does not look those names up.
+
+- `VITE_RAG_API_URL` (default: `http://localhost:8080`) — backend URL.
+- `VITE_MSAL_CLIENT_ID` (if MSAL wired) — Azure SPA application (client) ID.
+- `VITE_MSAL_AUTHORITY` (if MSAL wired) — full authority URL, e.g. `https://login.microsoftonline.com/<tenant-id>`.
+- `VITE_MSAL_REDIRECT_URI` (if MSAL wired) — redirect URI registered on the SPA app, e.g. `http://localhost:5173` for local dev (only accepted in `mode in ['development', 'test', 'local-auth']`; production must use a non-loopback URI).
+- `VITE_API_SCOPE` (if MSAL wired) — backend API scope, e.g. `api://<api-client-id>/.default`.
 ```
 
 ---
