@@ -425,7 +425,7 @@ class DevDoubleGateTest {
             .withPropertyValues("app.dev-doubles.enabled=true")
             .run { context ->
                 val markedBeans = context.getBeansWithAnnotation(DevOnlyBean::class.java).keys
-                assertThat(markedBeans).isNotEmpty
+                assertThat(markedBeans).isNotEmpty()
             }
     }
 }
@@ -442,7 +442,10 @@ package com.example.rag.config
 import com.example.rag.config.annotations.DevOnlyBean
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
+import org.springframework.context.annotation.Configuration
+import org.springframework.core.type.filter.AnnotationTypeFilter
 import org.springframework.core.type.filter.RegexPatternTypeFilter
 import org.springframework.util.ClassUtils
 import java.util.regex.Pattern
@@ -541,13 +544,49 @@ class DevDoubleClasspathScanTest {
         for (simple in positives) {
             assertThat(devDoubleNamePattern.matcher(simple).find())
                 .withFailMessage("regex must match dev-double simple name: %s", simple)
-                .isTrue
+                .isTrue()
         }
         for (simple in negatives) {
             assertThat(devDoubleNamePattern.matcher(simple).find())
                 .withFailMessage("regex must NOT match non-dev-double simple name: %s", simple)
-                .isFalse
+                .isFalse()
         }
+    }
+
+    @Test
+    fun `every @Bean method whose name matches the dev-double regex carries @DevOnlyBean (covers config-method case the class-level scan misses)`() {
+        // The class-level scan above only sees @Component/@Service classes. A
+        // @DevOnlyBean @Bean method declared inside a @Configuration class whose own
+        // simple name does NOT match the regex (e.g., `class DevDoublesConfig { @Bean
+        // fun fakeAuthClient(): AuthClient = ... }`) is invisible to the class-level
+        // scan. Without this method-level layer, that bean could be omitted from the
+        // Spring slice and pass both layers vacuously. This test fails the build if a
+        // @Bean method whose simple name matches the dev-double regex omits @DevOnlyBean.
+        val configScanner = ClassPathScanningCandidateComponentProvider(false).apply {
+            addIncludeFilter(AnnotationTypeFilter(Configuration::class.java))
+        }
+        val configClasses: List<Class<*>> = configScanner.findCandidateComponents(productionBasePackage)
+            .mapNotNull { bd -> bd.beanClassName }
+            .map { fqcn -> ClassUtils.forName(fqcn, javaClass.classLoader) }
+
+        val ungatedBeanMethods: List<String> = configClasses.flatMap { cls ->
+            cls.declaredMethods
+                .filter { it.isAnnotationPresent(Bean::class.java) }
+                .filter { devDoubleNamePattern.matcher(it.name).find() }
+                .filter { !it.isAnnotationPresent(DevOnlyBean::class.java) }
+                .map { method -> "${cls.simpleName}.${method.name}()" }
+        }
+
+        assertThat(ungatedBeanMethods)
+            .withFailMessage(
+                "FAIL THE BUILD: @Bean method(s) whose name matches " +
+                    "(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop) but do NOT carry " +
+                    "@DevOnlyBean: %s. The classpath scan does not catch this case at the " +
+                    "class level — @Bean methods inside neutrally-named @Configuration classes " +
+                    "are invisible to it. Add @DevOnlyBean to the @Bean method, OR rename it.",
+                ungatedBeanMethods,
+            )
+            .isEmpty()
     }
 
     @Test
@@ -641,7 +680,7 @@ class SecurityBeansPresentTest {
                     "(expected com.example.rag.*). Move the config under the app package " +
                     "or set @SpringBootApplication(scanBasePackages = ...) explicitly.",
             )
-            .isNotEmpty
+            .isNotEmpty()
     }
 
     @Test
@@ -654,7 +693,7 @@ class SecurityBeansPresentTest {
                     "boundary collapses. Likely cause: SecurityConfig package is outside the " +
                     "@SpringBootApplication scan root.",
             )
-            .isNotEmpty
+            .isNotEmpty()
     }
 }
 ```
@@ -934,28 +973,28 @@ class OboValidationTest {
         .header("Authorization", "Bearer $token")
 
     @Test fun `no Authorization header returns 401`() {
-        postWithoutAuth().exchange().expectStatus().isUnauthorized
+        postWithoutAuth().exchange().expectStatus().isUnauthorized()
     }
 
     @Test fun `malformed JWT returns 401`() {
-        postWithAuth(JwtTestKit.MALFORMED).exchange().expectStatus().isUnauthorized
+        postWithAuth(JwtTestKit.MALFORMED).exchange().expectStatus().isUnauthorized()
     }
 
     @Test fun `forged JWT signed by wrong key returns 401`() {
         // Structurally valid; signature verification against JWKS fails because the attacker
         // key is never published in publishedJwkSet().
         val token = JwtTestKit.forgedJwt(audience = AUDIENCE, issuer = ISSUER)
-        postWithAuth(token).exchange().expectStatus().isUnauthorized
+        postWithAuth(token).exchange().expectStatus().isUnauthorized()
     }
 
     @Test fun `JWT with wrong aud claim returns 401`() {
         val token = JwtTestKit.wrongAudienceJwt(expectedAudience = AUDIENCE, issuer = ISSUER)
-        postWithAuth(token).exchange().expectStatus().isUnauthorized
+        postWithAuth(token).exchange().expectStatus().isUnauthorized()
     }
 
     @Test fun `JWT with wrong iss claim returns 401`() {
         val token = JwtTestKit.wrongIssuerJwt(audience = AUDIENCE, expectedIssuer = ISSUER)
-        postWithAuth(token).exchange().expectStatus().isUnauthorized
+        postWithAuth(token).exchange().expectStatus().isUnauthorized()
     }
 
     @Test fun `valid JWT reaches the POST handler successfully`() {
@@ -965,7 +1004,7 @@ class OboValidationTest {
         // tighten this assertion accordingly — but it MUST NOT be 401/403.
         val token = JwtTestKit.validJwt(audience = AUDIENCE, issuer = ISSUER)
         postWithAuth(token).exchange()
-            .expectStatus().isOk
+            .expectStatus().isOk()
             .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
     }
 }
@@ -994,9 +1033,10 @@ Per existing TDD discipline. **Order matches the step order above.** Steps A–B
 
 All three tests **fail the build** under the following conditions:
 
-**`DevDoubleClasspathScanTest` fails the build when (load-bearing layer):**
-- A production class under `com.example` whose simple name matches `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` does NOT carry `@DevOnlyBean` and is NOT in the allow-list.
-- This catches the "ungated dev double exists in source" case independent of whether any Spring test slice happens to include it.
+**`DevDoubleClasspathScanTest` fails the build when (load-bearing layer — three independent checks):**
+- A production class under `com.example.rag` whose simple name matches `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` does NOT carry `@DevOnlyBean` and is NOT in the allow-list. Catches "ungated dev-double class exists in source."
+- A `@Bean` method declared inside any `@Configuration` class whose method name matches the dev-double regex does NOT carry `@DevOnlyBean`. Catches the "neutrally-named config class hosts an ungated method-level dev double" case the class-level scan misses.
+- The synthetic-fixture self-test fails to find `MockSyntheticDouble` in `com.fixtures.devdoublescan`. Catches a regression where the scanner pipeline itself stops working (e.g., the include filter is rebuilt with a broken regex shape, as iteration 2 demonstrated).
 
 **`DevDoubleGateTest` fails the build when (gating-misfire layer):**
 - A `@DevOnlyBean`-marked bean registers when `app.dev-doubles.enabled` is unset (the property gate or the meta-annotation broke).
