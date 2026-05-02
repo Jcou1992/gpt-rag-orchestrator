@@ -305,12 +305,23 @@ export async function getToken() {
 ```javascript
 import { getToken } from '@/services/auth';
 
+// LOAD-BEARING: build the endpoint from VITE_RAG_API_URL (validated at
+// startup by msalConfig.js's placeholder check) — NEVER use a relative
+// `/api/rag/ask` path. In a typical Vite SPA the frontend and backend
+// are served from different origins, so a relative URL would hit the
+// frontend's static host (404) instead of the orchestrator backend.
+// `new URL(path, base)` produces an absolute URL when base is set and
+// throws synchronously if base is missing or malformed — fail-loud beats
+// silent wrong-origin requests.
+const API_BASE = import.meta.env.VITE_RAG_API_URL;
+const RAG_ASK_URL = new URL('/api/rag/ask', API_BASE).toString();
+
 export async function callRagApi(payload) {
   // R8: getToken() failure must propagate. No silent catch-and-substitute
   // fallback — that pattern silently downgrades production to a stub
   // token and is the exact bug class the build-time alias is closing.
   const token = await getToken();
-  return fetch('/api/rag/ask', {
+  return fetch(RAG_ASK_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

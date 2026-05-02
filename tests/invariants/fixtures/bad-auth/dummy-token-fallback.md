@@ -57,6 +57,14 @@ const n = p().catch(async function () { return makeDevToken(); });
 const o = p().catch((function () { return makeDevToken(); }));
 const q = p().catch(/* fallback */ function () { return makeDevToken(); });
 const r = p().catch(async /* fallback */ function () { return makeDevToken(); });
+
+// Round-37 closures: comment with `{` inside (defeated the `[^){}]*?` gap
+// in iter-36) AND comment-prefixed arrow handler (defeated the arrow
+// regex which lacked comment tolerance). Both fixed by stripping JS
+// comments before applying the multiline regex pass.
+const s = p().catch(/* fallback {tok} */ function () { return makeDevToken(); });
+const t = p().catch(/* fallback */ () => makeDevToken());
+const u = p().catch(/* {scope} */ async () => makeDevToken());
 ```
 
 ## Forbidden env-var names

@@ -247,6 +247,12 @@ app:
     jwks-uri: ${ENTRA_JWKS_URI}      # no default — missing → app fails to start
     audience: ${ENTRA_AUDIENCE}       # no default
     issuer: ${ENTRA_ISSUER}           # no default
+  cors:
+    # Comma-separated list bound as List<String> to the SecurityConfig
+    # `allowedOrigins` constructor arg. NO wildcard fallback; a missing
+    # property fails the @ConfigurationProperties bind and the app refuses
+    # to start. Production must set this to the exact frontend origin(s).
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS}
 ```
 
 Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). The `dev` profile is for **real-backend local development** (real Entra ID, real orchestrator) and intentionally does NOT enable doubles — running `--spring.profiles.active=dev` gives the same auth posture as production. Only the `mock` profile (loaded via `application-mock.yml`) flips the gate to `true`. Activate doubles explicitly with `--spring.profiles.active=dev,mock` (or just `mock`) when you want canned SSE responses; this lines up with playbook 04 Step 3 and `docs/communication-fallbacks.md`.
@@ -782,6 +788,9 @@ import org.springframework.security.oauth2.jwt.JwtValidators
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.security.web.server.SecurityWebFilterChain
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.reactive.CorsConfigurationSource
+import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource
 
 @Configuration
 @EnableWebFluxSecurity
@@ -789,22 +798,61 @@ class SecurityConfig(
     @Value("\${app.entra.jwks-uri}") private val jwksUri: String,         // no default — missing → boot fails
     @Value("\${app.entra.audience}") private val expectedAudience: String, // required `aud` claim
     @Value("\${app.entra.issuer}")   private val expectedIssuer: String,   // expected `iss` claim
+    @Value("\${app.cors.allowed-origins}") private val allowedOrigins: List<String>, // explicit; no wildcard fallback
 ) {
 
     @Bean
     fun securityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain {
         return http
+            // CORS: enabled BEFORE oauth2ResourceServer so browser preflights
+            // (`OPTIONS /api/rag/ask`) succeed without a Bearer token. The
+            // CorsWebFilter populated by `corsConfigurationSource()` consults
+            // app.cors.allowed-origins and rejects any request from a non-
+            // allow-listed origin. Without this block, a real cross-origin
+            // frontend dies on preflight 401 long before the POST reaches
+            // the JWT validator. See OboValidationTest preflight assertion
+            // (Step F) for the wire-level guarantee.
+            .cors { it.configurationSource(corsConfigurationSource()) }
             // CSRF: disabled for stateless JWT endpoints. Bearer headers cannot be cross-origin-injected
             // by a browser (CORS prevents read; no auto-attach behavior for Authorization). CSRF only
             // matters for cookie-based credentials. See Unit 9b CSRF posture decision.
             .csrf { it.disable() }
             .authorizeExchange { exchanges ->
-                exchanges.anyExchange().authenticated()
+                // Permit unauthenticated CORS preflight requests; everything
+                // else still requires a validated JWT. Spring's `cors {}` block
+                // above also handles preflights, but the explicit permitAll
+                // makes the intent visible to readers and survives a future
+                // refactor that strips the cors() configuration.
+                exchanges
+                    .pathMatchers(org.springframework.http.HttpMethod.OPTIONS).permitAll()
+                    .anyExchange().authenticated()
             }
             .oauth2ResourceServer { oauth2 ->
                 oauth2.jwt { jwt -> jwt.jwtDecoder(reactiveJwtDecoder()) }
             }
             .build()
+    }
+
+    @Bean
+    fun corsConfigurationSource(): CorsConfigurationSource {
+        // Allow-list driven by `app.cors.allowed-origins` (List<String>). NO
+        // wildcard `*` fallback — a missing property fails to bind and the
+        // app refuses to start, fail-closed. Methods limited to what
+        // /api/rag/ask + tools endpoints actually use; headers limited to
+        // what MSAL + the SSE client require. `allowCredentials` is FALSE
+        // because the auth boundary uses Bearer tokens, not cookies; turning
+        // it on without removing wildcard origin would be a CORS misuse.
+        val cfg = CorsConfiguration().apply {
+            allowedOrigins = this@SecurityConfig.allowedOrigins
+            allowedMethods = listOf("GET", "POST", "OPTIONS")
+            allowedHeaders = listOf("Authorization", "Content-Type", "Accept")
+            exposedHeaders = listOf("Content-Type")
+            allowCredentials = false
+            maxAge = 600L // 10 min preflight cache
+        }
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/**", cfg)
+        }
     }
 
     @Bean
@@ -1013,6 +1061,11 @@ class OboValidationTest {
             // OBO leg has a working downstream stub, isolating what this test asserts:
             // "the auth filter accepts a real token and the request reaches the handler."
             registry.add("app.dev-doubles.enabled") { "true" }
+            // CORS allow-list — required by SecurityConfig's
+            // `CorsConfigurationSource`. Without this property the bean
+            // construction fails, the context refuses to start, and the
+            // OBO test would error out before any assertion runs.
+            registry.add("app.cors.allowed-origins") { "http://localhost:5173" }
         }
     }
 
@@ -1058,6 +1111,26 @@ class OboValidationTest {
         postWithAuth(token).exchange()
             .expectStatus().isOk()
             .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+    }
+
+    @Test fun `CORS preflight from allowed origin returns 200 without a Bearer token`() {
+        // Browser-driven flow: a real frontend deployed on a different origin
+        // sends an `OPTIONS /api/rag/ask` preflight before its POST. CSRF is
+        // disabled and Bearer auth is the only credential; without explicit
+        // CORS handling the preflight would be rejected by the JWT filter
+        // (no Authorization header) and the actual POST would never run. The
+        // SecurityConfig wires `cors {}` + permits `OPTIONS` so preflights
+        // succeed without auth. This test fails-loud on regression.
+        webClient
+            .options().uri("/api/rag/ask")
+            .header("Origin", "http://localhost:5173")
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", "Authorization, Content-Type")
+            .exchange()
+            .expectStatus().isOk()
+            .expectHeader().valueEquals("Access-Control-Allow-Origin", "http://localhost:5173")
+            .expectHeader().exists("Access-Control-Allow-Methods")
+            .expectHeader().exists("Access-Control-Allow-Headers")
     }
 }
 ```

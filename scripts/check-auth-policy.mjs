@@ -249,6 +249,19 @@ function scanFile(file) {
   // catch-substitute patterns split across lines (round-34 bypass) are
   // caught. Line number derived from the match's index.
   const rel = relative(REPO_ROOT, file);
+
+  // Strip JS/TS comments before applying multiline regexes — closes the
+  // round-37 bypass class where a `.catch(/* fallback {tok} */ function ...)`
+  // comment containing `{` defeated the `[^){}]*?` gap regex. We replace
+  // every comment with whitespace of the same length so line/column
+  // offsets are preserved (line numbers we report still match the user's
+  // editor view). Substring/line-scoped rules above continue to scan the
+  // RAW text — they intentionally still flag forbidden tokens hidden in
+  // comments (e.g., `// dummy JWT`).
+  const commentStripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))   // /* ... */
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, (full, p1) => p1 + ' '.repeat(full.length - p1.length));  // // ... (avoid eating URLs like https://)
+
   for (const rule of FORBIDDEN_REGEX) {
     if (!rule.multiline) continue;
     // Ensure the regex has the `g` flag for repeated `exec`.
@@ -256,8 +269,8 @@ function scanFile(file) {
       ? rule.regex
       : new RegExp(rule.regex.source, rule.regex.flags + 'g');
     let m;
-    while ((m = re.exec(text)) !== null) {
-      const lineNumber = text.slice(0, m.index).split('\n').length;
+    while ((m = re.exec(commentStripped)) !== null) {
+      const lineNumber = commentStripped.slice(0, m.index).split('\n').length;
       // Allowlist resolution: walk backwards from the line of the match
       // for a STANDALONE anchor (same semantics as the line-scoped path).
       let allowed = false;
