@@ -1,0 +1,58 @@
+name: Junie skill invariants
+
+# Runs the three repo-side invariants that guard the .junie/ scaffolding
+# skill against the failure classes the v4 adversarial loop closed:
+#
+#   - check-r5-invariant.mjs    : no inline schema duplication in playbooks
+#                                 (single-source SSE contract under
+#                                  .junie/contracts/)
+#   - check-stack-invariant.mjs : no servlet imports in Kotlin/Java code
+#                                 blocks (locked WebFlux stack)
+#   - check-auth-policy.mjs     : no dummy-JWT generation, no
+#                                 catch-and-substitute auth fallback, no
+#                                 obsolete env-var names (RAG_API_URL,
+#                                 VITE_MSAL_TENANT_ID, VITE_MSAL_API_SCOPE)
+#
+# All three exit non-zero on violation; this workflow surfaces those exits
+# as PR check failures and pushes to playbookGeneration / main / release.
+
+on:
+  pull_request:
+    paths:
+      - '.junie/**'
+      - 'scripts/check-*.mjs'
+      - 'INTEGRATION_PLAN.md'
+      - '.github/workflows/junie_invariants.yaml'
+  push:
+    branches:
+      - main
+      - develop
+      - 'release/**'
+      - playbookGeneration
+    paths:
+      - '.junie/**'
+      - 'scripts/check-*.mjs'
+      - 'INTEGRATION_PLAN.md'
+      - '.github/workflows/junie_invariants.yaml'
+
+jobs:
+  invariants:
+    name: Run invariant scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: R5 invariant — no inline SSE schema duplication
+        run: node scripts/check-r5-invariant.mjs
+
+      - name: Stack invariant — no servlet imports in WebFlux scaffold
+        run: node scripts/check-stack-invariant.mjs
+
+      - name: Auth-policy invariant — no dummy-JWT / catch-substitute / obsolete env vars
+        run: node scripts/check-auth-policy.mjs
