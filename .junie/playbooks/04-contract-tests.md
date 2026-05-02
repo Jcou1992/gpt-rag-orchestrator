@@ -308,7 +308,7 @@ After `vite build`, run a dedicated leak test that asserts the dev auth-stub did
 
 ```javascript
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve, basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -322,13 +322,21 @@ const distDir = resolve(projectRoot, 'dist');
 
 const SENTINEL = '__JUNIE_DEV_AUTH_STUB_SENTINEL_a3f7c291_4b2e_48d1_9c6a_77e0f3b82d14__';
 
-function walkDist() {
-  // Recursive walk of dist/. Returns absolute paths of every regular file.
-  // We use { recursive: true } (Node 20+) instead of a glob lib because
-  // some glob impls silently miss hashed asset subdirectories.
-  return readdirSync(distDir, { recursive: true })
-    .map((rel) => join(distDir, rel))
-    .filter((p) => statSync(p).isFile());
+function walkDist(dir = distDir) {
+  // Manual recursive walk of dist/. Returns absolute paths of every regular
+  // file. We avoid `readdirSync(dir, { recursive: true })` (Node 20+) because
+  // on Node 18 that flag is silently ignored and the leak test then scans only
+  // the top level of dist/ — vacuous pass when the auth-stub lands inside a
+  // hashed subdirectory like dist/assets/. Manual walk works on Node 18+ and
+  // is no slower in practice for a few hundred files. Glob libs are also
+  // avoided: some implementations skip hashed asset subdirectories.
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkDist(full));
+    else if (entry.isFile()) out.push(full);
+  }
+  return out;
 }
 
 describe('frontend leak test — dev auth-stub must not ship in prod bundle', () => {
@@ -409,13 +417,26 @@ const PLACEHOLDER_VALUES = new Set([
   null,
 ]);
 
-const isDevMode = import.meta.env.MODE === 'development' || import.meta.env.MODE === 'test';
+// Three modes that talk to a real MSAL on a developer machine: the two Vite
+// dev modes that resolve auth-stub.js, plus `local-auth` (described in the
+// offline-dev section below — real MSAL but a localhost redirect URI is OK).
+// `production` is intentionally NOT in this list; a production build with a
+// localhost redirect URI is a misconfigured deploy and must fail loud.
+const ALLOWS_LOCAL_REDIRECT = new Set(['development', 'test', 'local-auth']);
+
+const mode = import.meta.env.MODE;
+const isDevMode = mode === 'development' || mode === 'test';
+const isLocalRedirectAllowed = ALLOWS_LOCAL_REDIRECT.has(mode);
 
 function isPlaceholder(value) {
   if (PLACEHOLDER_VALUES.has(value)) return true;
   if (typeof value !== 'string') return true;
-  // localhost in non-dev mode is also a placeholder smell.
-  if (!isDevMode && /^https?:\/\/localhost(:\d+)?(\/|$)/i.test(value)) return true;
+  // Localhost redirect URIs are accepted ONLY in modes explicitly allow-listed
+  // above. Treating them as a placeholder in `production` keeps a misconfigured
+  // deploy from silently shipping; treating them as valid in `local-auth` lets
+  // a developer run real MSAL against http://localhost:5173 without re-routing
+  // through a tunneling service.
+  if (!isLocalRedirectAllowed && /^https?:\/\/localhost(:\d+)?(\/|$)/i.test(value)) return true;
   return false;
 }
 
@@ -563,18 +584,17 @@ The frontend `auth-stub.js` mints a fake non-RSA JWT for module-scope storage. T
 
 **Mode 2 — Frontend + backend dev (no orchestrator).** Backend uses `MockOrchestratorClient` via the dev-double gate; frontend acquires a **real** Entra ID JWT via MSAL.
 
+Use the dedicated **`local-auth`** Vite mode here, NOT `--mode production`. `local-auth` is allow-listed by `msalConfig.js` to accept a `localhost` redirect URI (so MSAL can return to `http://localhost:5173` after sign-in) while still resolving the real `auth.js` path (NOT in Vite's dev-stub allowlist `['development', 'test']`). Running `--mode production` against a localhost redirect URI fails the placeholder validator at startup — by design, since a production build with a localhost redirect is a misconfigured deploy.
+
 \`\`\`bash
 # Terminal 1: Backend with the mock orchestrator profile (canned SSE).
 # `dev` profile gives prod-like config; `mock` flips app.dev-doubles.enabled=true.
 cd backend
 ./gradlew bootRun --args='--spring.profiles.active=dev,mock'
 
-# Terminal 2: Frontend in 'production' mode so Vite resolves the real auth.js.
-# `pnpm dev` resolves to auth-stub.js — its fake token would 401 against the
-# backend's NimbusReactiveJwtDecoder. Use `pnpm dev --mode production` (or
-# `pnpm preview` after `pnpm build`) so MSAL acquires a real JWT.
+# Terminal 2: Frontend in `local-auth` mode — real MSAL, localhost redirect OK.
 cd frontend
-pnpm dev --mode production
+pnpm dev --mode local-auth
 \`\`\`
 
 Visit `http://localhost:5173`, sign in via real MSAL, submit a query. Backend returns canned SSE; frontend renders it. **End-to-end works because the JWT is real, even though the orchestrator is faked.**

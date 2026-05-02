@@ -310,10 +310,14 @@ dependencies {
   },
   "devDependencies": {
     "vite": "^5.4.0",
+    "@vitejs/plugin-vue": "^5.1.0",
     "vite-plugin-vuetify": "^2.0.4",
     "vitest": "^2.0.0",
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }
 ```
@@ -323,7 +327,9 @@ dependencies {
 > **Notas:**
 > - `@microsoft/fetch-event-source` es imprescindible — el `EventSource` nativo no soporta headers custom y vas a necesitar `Authorization: Bearer`.
 > - `@azure/msal-browser` lo importa `src/auth/msalConfig.{js,ts}` (R11/SC6 hardened MSAL). Sin él el build se rompe con `Cannot find module '@azure/msal-browser'`.
+> - `@vitejs/plugin-vue` lo importa `vite.config.js` (`plugins: [vue()]`); sin él el dev server arranca pero ningún `.vue` compila.
 > - `vitest` + `ajv` + `ajv-formats` son los runners y validadores que `contract-tests/contract.spec.{js,ts}` y `contract-tests/leak.spec.{js,ts}` requieren (playbook 04 Pasos 2 y 5).
+> - `engines.node >= 20` queda como floor declarado para alinearse con Vite 5 (que pide Node ≥18 desde 5.0 y se beneficia de Node 20 LTS) y con Vitest 2. Los specs de playbook 04 son Node-18-safe (el leak-test usa un walker manual con `withFileTypes`), pero declarar el floor evita ambigüedades cuando un futuro spec se apoye en una API solo-Node-20+.
 
 ---
 
