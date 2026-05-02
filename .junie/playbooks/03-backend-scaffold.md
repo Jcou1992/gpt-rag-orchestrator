@@ -235,7 +235,8 @@ class DevDoublesConfig {
 |---|---|
 | `application.yml` (production default) | `false` (explicit) |
 | `application-test.yml` | unset (or `false`) |
-| `application-dev.yml` | `true` |
+| `application-dev.yml` | unset — plain `dev` does **not** auto-enable mocks |
+| `application-mock.yml` (the only dev-double activation profile) | `true` (explicit) |
 
 ```yaml
 # application.yml (production default — explicit fail-closed)
@@ -248,7 +249,7 @@ app:
     issuer: ${ENTRA_ISSUER}           # no default
 ```
 
-Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). Only the `dev` profile flips it to `true`.
+Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). The `dev` profile is for **real-backend local development** (real Entra ID, real orchestrator) and intentionally does NOT enable doubles — running `--spring.profiles.active=dev` gives the same auth posture as production. Only the `mock` profile (loaded via `application-mock.yml`) flips the gate to `true`. Activate doubles explicitly with `--spring.profiles.active=dev,mock` (or just `mock`) when you want canned SSE responses; this lines up with playbook 04 Step 3 and `docs/communication-fallbacks.md`.
 
 #### Step C — Generate `UserContext.kt` DTO + `MockOrchestratorClient.kt` (must land BEFORE the gate tests below)
 

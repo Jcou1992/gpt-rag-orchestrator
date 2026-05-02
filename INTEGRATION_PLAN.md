@@ -101,7 +101,7 @@ flowchart LR
 
 ### 2.4 Flujo de datos (query → respuesta)
 
-1. Request entra con `ask`, `conversation_id` opcional, `user_context`.
+1. Request entra al **orchestrator (FastAPI)** con `ask`, `conversation_id` opcional, y `user_context` (este último lo construye Spring desde el JWT autenticado en el paso 0; ver §3.1: el browser nunca lo envía).
 2. Factory selecciona strategy según `AGENT_STRATEGY` (default: `single_agent_rag`).
 3. **Embeddings:** modelo `EMBEDDING_DEPLOYMENT_NAME` (ej. `text-embedding-3-large`, 3072 dims).
 4. **Retrieval (AI Search):** índice `SEARCH_RAG_INDEX_NAME`, approach `hybrid|vector|term`, top-K configurable, semantic ranking opcional.

@@ -48,9 +48,16 @@ The drift test loads the schema and fixture from the locations Step 1 wrote, val
 ```javascript
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
+
+// ESM has no __dirname / __filename — derive them from import.meta.url.
+// Without this, `resolve(__dirname, ...)` throws ReferenceError in Vitest's
+// ESM runner BEFORE any assertion runs (vacuous fail with no signal).
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Schema + fixture are emitted by Step 1 from the canonical files under
 // `.junie/contracts/`. Reading via fs (not import attributes) keeps this
@@ -302,7 +309,13 @@ After `vite build`, run a dedicated leak test that asserts the dev auth-stub did
 ```javascript
 import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve, basename, join } from 'node:path';
+import { resolve, basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// ESM-safe __dirname (see contract.spec.js for rationale — Vitest's ESM
+// runner does not define __dirname; resolve() against undefined throws).
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const projectRoot = resolve(__dirname, '..');
 const distDir = resolve(projectRoot, 'dist');
@@ -542,19 +555,31 @@ Generate **`docs/communication-fallbacks.md`**:
 - Use `MockOrchestratorClient` by running with `--spring.profiles.active=mock` (loads `application-mock.yml`, which sets `app.dev-doubles.enabled=true`).
 - The single gate is `app.dev-doubles.enabled=true` — do NOT introduce `orchestrator.mock-enabled` or any other parallel property. `DevDoubleGateTest` enforces this invariant.
 
-**To test locally (frontend + backend, no orchestrator):**
+**Offline dev: two supported modes (and one unsupported one).**
+
+The frontend `auth-stub.js` mints a fake non-RSA JWT for module-scope storage. The backend's `SecurityConfig` validates incoming tokens against the Entra ID JWKS, audience, and issuer using `NimbusReactiveJwtDecoder`. **The fake token will not pass** — that is the point of R6c/R7c: there is no dev backdoor in the auth chain, and adding one would silently re-introduce the v3 leak class. Plan accordingly.
+
+**Mode 1 — Frontend-only dev (real backend not running).** The Vite dev alias resolves `@/services/auth` to `auth-stub.js`. Pair with a frontend-side mock for `/api/rag/ask` (e.g., MSW or a Vite middleware) so `ragApi.js` never reaches a real backend. Use this for pure UI/UX iteration where the auth boundary is irrelevant.
+
+**Mode 2 — Frontend + backend dev (no orchestrator).** Backend uses `MockOrchestratorClient` via the dev-double gate; frontend acquires a **real** Entra ID JWT via MSAL.
 
 \`\`\`bash
-# Terminal 1: Backend (mocked orchestrator)
+# Terminal 1: Backend with the mock orchestrator profile (canned SSE).
+# `dev` profile gives prod-like config; `mock` flips app.dev-doubles.enabled=true.
 cd backend
 ./gradlew bootRun --args='--spring.profiles.active=dev,mock'
 
-# Terminal 2: Frontend
+# Terminal 2: Frontend in 'production' mode so Vite resolves the real auth.js.
+# `pnpm dev` resolves to auth-stub.js — its fake token would 401 against the
+# backend's NimbusReactiveJwtDecoder. Use `pnpm dev --mode production` (or
+# `pnpm preview` after `pnpm build`) so MSAL acquires a real JWT.
 cd frontend
-pnpm dev
+pnpm dev --mode production
 \`\`\`
 
-Visit `http://localhost:5173`, submit a query. Backend returns fake SSE, frontend renders it.
+Visit `http://localhost:5173`, sign in via real MSAL, submit a query. Backend returns canned SSE; frontend renders it. **End-to-end works because the JWT is real, even though the orchestrator is faked.**
+
+**Unsupported: fake-token + real backend.** Running `pnpm dev` (which resolves `auth-stub.js`) against the backend will return HTTP 401 from `oauth2ResourceServer().jwt()`. This is correct behavior — do not "fix" it by disabling backend JWT validation in the `dev` profile. R6c is non-negotiable: the auth boundary holds in every profile, including local dev. If you need the orchestrator faked AND the frontend without real auth, run Mode 1 (frontend-only) instead.
 
 ### Scenario: MSAL auth is not wired
 
