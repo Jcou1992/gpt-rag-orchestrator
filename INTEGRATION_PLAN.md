@@ -144,10 +144,11 @@ Request:
 ```json
 {
   "ask": "¿Cuál es la política de devoluciones?",
-  "conversationId": "uuid-opcional",
-  "userContext": { "department": "ventas" }
+  "conversationId": "uuid-opcional"
 }
 ```
+
+**Auth-boundary note.** `UserContext` (forwarded to the orchestrator on the OBO leg) is **server-derived** from the authenticated Entra ID JWT — `oid`, `preferred_username`, and any configured attribute mapping (e.g., `department` from a Graph enrichment step). The browser MUST NOT include a `userContext` field; Spring builds it via `UserContextBuilder` from the JWT in `ReactiveSecurityContextHolder`. Accepting client-supplied identity here would let the front-end override the OBO subject and forward an attacker-chosen `oid` downstream.
 
 Response SSE (JSON envelope normalizado por Spring):
 

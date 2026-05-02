@@ -255,10 +255,13 @@ export async function getToken() {
 // rendering, and the correlation-ID-only logging — all R11/SC6 controls.
 // The single-source pattern keeps the auth boundary's hardening in exactly
 // one file; auth.js is just the alias adapter.
-import { getToken as hardenedGetToken } from '../auth/msalConfig.js';
+import { getToken as hardenedGetToken, apiScope } from '../auth/msalConfig.js';
 
 export async function getToken() {
-  return hardenedGetToken([import.meta.env.VITE_API_SCOPE]);
+  // Pull apiScope from msalConfig so the value has already been validated at
+  // startup. Reading import.meta.env.VITE_API_SCOPE directly here would
+  // bypass that validator and let a missing scope reach acquireTokenSilent.
+  return hardenedGetToken([apiScope]);
 }
 ```
 
@@ -403,6 +406,12 @@ function isPlaceholder(value) {
   return false;
 }
 
+// API scope is read here so the same placeholder validator that gates clientId /
+// authority / redirectUri also gates VITE_API_SCOPE. Without this, a missing
+// scope would not fail at startup — it would fail silently inside acquireTokenSilent
+// at first request, after the app has already mounted and looked healthy.
+export const apiScope = import.meta.env.VITE_API_SCOPE;
+
 export const msalConfig = {
   auth: {
     clientId: import.meta.env.VITE_MSAL_CLIENT_ID,
@@ -431,6 +440,7 @@ function validateConfigOrHalt() {
     ['clientId', msalConfig.auth.clientId],
     ['authority', msalConfig.auth.authority],
     ['redirectUri', msalConfig.auth.redirectUri],
+    ['apiScope', apiScope],            // VITE_API_SCOPE — fail-closed at startup
   ];
   const bad = checks.filter(([, v]) => isPlaceholder(v));
   if (bad.length > 0) {
@@ -438,7 +448,7 @@ function validateConfigOrHalt() {
     root.innerHTML = `
       <div role="alert" style="font-family:system-ui;padding:2rem;max-width:40rem;margin:4rem auto;border:1px solid #c00;border-radius:8px;">
         <h1 style="color:#c00;margin-top:0;">Authentication is not configured</h1>
-        <p>Required MSAL values are missing or contain placeholder text. Set <code>VITE_MSAL_CLIENT_ID</code>, <code>VITE_MSAL_AUTHORITY</code>, and <code>VITE_MSAL_REDIRECT_URI</code> in your environment, then redeploy.</p>
+        <p>Required MSAL values are missing or contain placeholder text. Set <code>VITE_MSAL_CLIENT_ID</code>, <code>VITE_MSAL_AUTHORITY</code>, <code>VITE_MSAL_REDIRECT_URI</code>, and <code>VITE_API_SCOPE</code> in your environment, then redeploy.</p>
         <p>Contact your administrator if you do not have these values.</p>
       </div>
     `;
@@ -559,7 +569,7 @@ Visit `http://localhost:5173`, submit a query. Backend returns fake SSE, fronten
 
 **To wire real auth:**
 - Implement `src/services/auth.js` with real MSAL calls (see Step 4 template).
-- Set `VITE_MSAL_CLIENT_ID`, `VITE_MSAL_AUTHORITY`, `VITE_MSAL_REDIRECT_URI` in your environment.
+- Set `VITE_MSAL_CLIENT_ID`, `VITE_MSAL_AUTHORITY`, `VITE_MSAL_REDIRECT_URI`, and `VITE_API_SCOPE` in your environment. All four are validated at startup by `msalConfig.js`; missing or placeholder values render the config-error screen and prevent app mount.
 - Build with `vite build` (default mode `production` picks up the real auth path).
 
 ### Scenario: Backend can't reach orchestrator (network error)

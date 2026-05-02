@@ -266,7 +266,16 @@ package com.example.rag.web.dto
 
 /**
  * User-scoped context attached to a /api/rag/ask request.
- * Built from Entra ID JWT claims by UserContextBuilder (Unit 3 service).
+ *
+ * SERVER-DERIVED ONLY. Built from the authenticated Entra ID JWT by
+ * UserContextBuilder (Unit 3 service). NEVER deserialized from the
+ * request body — accepting client-supplied identity here would let the
+ * browser overwrite the OBO subject and forward an attacker-chosen oid
+ * to the orchestrator. RagController (Unit 7) reads the
+ * JwtAuthenticationToken from ReactiveSecurityContextHolder, hands it
+ * to UserContextBuilder, and uses the result; the AskRequest body has
+ * no `userContext` field.
+ *
  * Forwarded to the orchestrator on the OBO leg (per INTEGRATION_PLAN.md §3.1).
  *
  * NOTE: this DTO would ideally live in Unit 1's DTO bundle alongside AskRequest
@@ -279,7 +288,15 @@ data class UserContext(
     val oid: String,
     /** Preferred username (preferred_username / upn claim). May be null in some token types. */
     val preferredUsername: String? = null,
-    /** Free-form attribute bag — e.g., {"department": "ventas"} per INTEGRATION_PLAN §3.1. */
+    /**
+     * Free-form attribute bag — e.g., {"department": "ventas"} per INTEGRATION_PLAN §3.1.
+     * Populated SERVER-SIDE only (e.g., from Graph API enrichment or a configured
+     * claim mapping). Never copied from the request body. If your integration plan
+     * requires browser-supplied attributes (theme/locale, etc.), put those on a
+     * separate request DTO field — DO NOT mix them into UserContext, since this
+     * DTO is the OBO subject and treating any of its fields as client-controlled
+     * collapses the auth boundary.
+     */
     val attributes: Map<String, String> = emptyMap(),
 )
 ```
@@ -945,10 +962,13 @@ class OboValidationTest {
         // below MUST exercise that exact verb + path; using GET would test a
         // route that does not exist and either return 404/405 or pressure
         // implementers to add a dummy GET handler — both weaken the gate.
+        // AskRequest body does NOT contain userContext — that DTO is server-derived
+        // from the authenticated JWT by UserContextBuilder (Unit 3) inside
+        // RagController. Including it here would teach scaffolders to accept
+        // client-supplied identity, which collapses the OBO auth boundary.
         private val askRequestBody = mapOf(
             "ask" to "test prompt for OBO validation",
             "conversationId" to "test-conversation-1",
-            "userContext" to emptyMap<String, Any>(),
         )
 
         private val wireMock: WireMockServer = WireMockServer(wireMockConfig().dynamicPort())
@@ -1116,14 +1136,15 @@ Stream RAG chat responses.
 - `Authorization: Bearer <JWT>`
 - `Accept: text/event-stream`
 
-**Request body:**
+**Request body** (`AskRequest`):
 \`\`\`json
 {
   "ask": "What is the refund policy?",
-  "conversationId": "uuid-optional",
-  "userContext": { "department": "sales" }
+  "conversationId": "uuid-optional"
 }
 \`\`\`
+
+The `UserContext` forwarded to the orchestrator on the OBO leg is built **server-side** by `UserContextBuilder` from the authenticated JWT (`oid` / `preferred_username` / configured attribute mapping). The browser MUST NOT supply identity context — accepting one here would let the client override the OBO subject. Validated by `OboValidationTest` (Unit 9b Step F): the `askRequestBody` fixture there carries only `ask` + `conversationId`, no `userContext` field.
 
 **Response (SSE):** see canonical event examples at [`.junie/contracts/sse-events.examples.json`](../../.junie/contracts/sse-events.examples.json) (also copied into the scaffolded target's `contract-tests/fixtures/sse-events.examples.json` by playbook 04 Step 1). Five event types — `conversationId`, `chunk`, `citation`, `done`, `error` — validated against `.junie/contracts/sse-events.schema.json`. Do not restate event payloads here; the canonical fixture is the only source.
 

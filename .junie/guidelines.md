@@ -38,7 +38,7 @@ This repo integrates the GPT-RAG Orchestrator (Python/FastAPI) into a **Vue 3 + 
    - [`playbooks/create-rag-app.md`](playbooks/create-rag-app.md) — **Orchestrator.** Calls 5 sub-playbooks sequentially:
      1. **01-preflight** — lock all decisions (language, package manager, MSAL, add-ons). Output: `SCAFFOLD_DECISIONS.md`.
      2. **02-frontend-scaffold** — generate Vue 3 code TDD-first (9 units, 27 tests). Output: `frontend/`, `docs/frontend-api.md`.
-     3. **03-backend-scaffold** — generate Kotlin/Spring code TDD-first (9 units, 32 tests). Output: `backend/`, `docs/backend-openapi.md`.
+     3. **03-backend-scaffold** — generate Kotlin/Spring code TDD-first (Units 1–8 + Unit 9b dev-double/OBO, 39 tests; Unit 9 MCP optional). Output: `backend/`, `docs/backend-openapi.md`.
      4. **04-contract-tests** — validate frontend ↔ backend contracts, set up mocks/fallbacks. Output: `contract-tests/`, `docs/communication-fallbacks.md`.
      5. **05-docs-generation** — generate 10+ comprehensive guides (1200+ lines). Output: `docs/` with setup, architecture, development, testing, troubleshooting, conventions.
 
