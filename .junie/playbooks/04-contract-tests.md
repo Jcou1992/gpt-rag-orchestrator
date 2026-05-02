@@ -190,23 +190,51 @@ import { fileURLToPath } from 'node:url';
 // (e.g., `vite build --mode staging`) and would silently ship the dev stub.
 const DEV_MODES = ['development', 'test'];
 
-export default defineConfig(({ mode }) => ({
-  plugins: [vue()],
-  build: {
-    // Load-bearing for the leak test in Step 5: the manifest gives us a
-    // minification-stable view of which sources made it into the prod bundle.
-    manifest: true,
-  },
-  resolve: {
-    alias: {
-      // Absolute paths are required — Vite resolves relative alias values
-      // relative to the importer, which makes `./src/...` non-deterministic.
-      '@/services/auth': DEV_MODES.includes(mode)
-        ? fileURLToPath(new URL('./src/services/auth-stub.js', import.meta.url))
-        : fileURLToPath(new URL('./src/services/auth.js', import.meta.url)),
+// Modes that allow loopback redirect URIs at runtime (consumed by
+// src/auth/msalConfig.js). Local-auth is dev-server-only — see the
+// build-command guard below for why `vite build --mode local-auth`
+// must FAIL THE BUILD itself, not just throw at user runtime.
+const LOCAL_AUTH_MODE = 'local-auth';
+
+export default defineConfig(({ command, mode }) => {
+  // BUILD-TIME GUARD (closes round-22 adversarial bypass).
+  //
+  // The runtime guard in `msalConfig.js` (`if PROD && mode === 'local-auth'
+  // throw`) only fires when a USER loads the app. A CI pipeline running
+  // `vite build --mode local-auth` would otherwise exit zero, publish a
+  // poisoned artifact, and ship sign-in failure to production. This block
+  // raises the failure to build time so a misconfigured pipeline fails
+  // before the artifact is even emitted.
+  //
+  // The check is `command === 'build'` rather than `import.meta.env.PROD`
+  // because Vite config evaluation is Node-side; `import.meta.env` is the
+  // bundle-side abstraction. `command` is the canonical Node-side signal.
+  if (command === 'build' && mode === LOCAL_AUTH_MODE) {
+    throw new Error(
+      'vite build --mode local-auth is forbidden. ' +
+      'local-auth is a developer-machine convenience for `vite dev` only. ' +
+      'Use the default `production` mode to build deployable bundles.',
+    );
+  }
+
+  return {
+    plugins: [vue()],
+    build: {
+      // Load-bearing for the leak test in Step 5: the manifest gives us a
+      // minification-stable view of which sources made it into the prod bundle.
+      manifest: true,
     },
-  },
-}));
+    resolve: {
+      alias: {
+        // Absolute paths are required — Vite resolves relative alias values
+        // relative to the importer, which makes `./src/...` non-deterministic.
+        '@/services/auth': DEV_MODES.includes(mode)
+          ? fileURLToPath(new URL('./src/services/auth-stub.js', import.meta.url))
+          : fileURLToPath(new URL('./src/services/auth.js', import.meta.url)),
+      },
+    },
+  };
+});
 ```
 
 **`src/services/auth-stub.js`** (dev only — never present in prod manifest):
@@ -391,6 +419,28 @@ describe('frontend leak test — dev auth-stub must not ship in prod bundle', ()
 ```
 
 Run with `pnpm build && pnpm test contract-tests/leak.spec.js`. The build must precede the test; running the test without a fresh `dist/` fails the false-pass guard.
+
+**Step 5b — Build-mode regression check (closes round-22 adversarial bypass).**
+
+The build-time guard added to `vite.config.js` in Step 4 (`if (command === 'build' && mode === 'local-auth') throw`) MUST be exercised by an automated regression check so a future contributor cannot silently revert it. Add this single-line check to the scaffolded `package.json`'s `scripts` block, and gate `pnpm test` on it:
+
+```json
+{
+  "scripts": {
+    "build": "vite build",
+    "test": "pnpm run check:no-local-auth-build && vitest run",
+    "check:no-local-auth-build": "! vite build --mode local-auth"
+  }
+}
+```
+
+The `! vite build --mode local-auth` invocation passes only when the inner command exits non-zero — i.e., when the guard threw. If the guard is removed, the build succeeds, the negated command fails, and `pnpm test` halts. Equivalent shell-portable form using `node` for cross-shell portability:
+
+```bash
+node -e "const { spawnSync } = require('child_process'); const r = spawnSync('vite', ['build','--mode','local-auth'], { stdio: 'inherit' }); process.exit(r.status === 0 ? 1 : 0);"
+```
+
+This regression check runs in CI alongside the leak test. A contributor who weakens the guard sees the failure before the artifact ships.
 
 ---
 
