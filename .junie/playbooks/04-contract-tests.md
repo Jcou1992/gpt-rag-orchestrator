@@ -18,19 +18,19 @@ The canonical SSE schema is **not restated here**. Instead, the scaffolder runs 
 
 We use Node's `fs.copyFileSync` instead of POSIX `cp` because the scaffolded target may be running on Windows; `cp` is not available in default cmd.exe / PowerShell environments. Node ships with the JetBrains-bundled runtime that Junie targets, so this works cross-platform.
 
-Run from the scaffolded project root (where `.junie/` lives):
+Run from the scaffolded project root (where `.junie/` lives). Every command is a single `node -e` invocation so the same line works in cmd.exe, PowerShell, and POSIX shells (no `mkdir -p` / `test -s` / shell substitutions):
 
 ```bash
-mkdir -p contract-tests/schemas contract-tests/fixtures
+node -e "const fs=require('fs'); fs.mkdirSync('contract-tests/schemas',{recursive:true}); fs.mkdirSync('contract-tests/fixtures',{recursive:true});"
 node -e "require('fs').copyFileSync('.junie/contracts/sse-events.schema.json', 'contract-tests/schemas/ask-chunk-event.schema.json')"
 node -e "require('fs').copyFileSync('.junie/contracts/sse-events.examples.json', 'contract-tests/fixtures/sse-events.examples.json')"
 ```
 
-Verify the copy:
+Verify the copy (Node `statSync` replaces POSIX `test -s`; non-zero exit on missing/empty file works the same on Windows):
 
 ```bash
-test -s contract-tests/schemas/ask-chunk-event.schema.json && echo "schema copied"
-test -s contract-tests/fixtures/sse-events.examples.json && echo "fixture copied"
+node -e "const s=require('fs').statSync('contract-tests/schemas/ask-chunk-event.schema.json'); if(!s.size) process.exit(1); console.log('schema copied');"
+node -e "const s=require('fs').statSync('contract-tests/fixtures/sse-events.examples.json'); if(!s.size) process.exit(1); console.log('fixture copied');"
 ```
 
 **Why this matters:** when the canonical schema evolves (e.g., a new event type is added under `.junie/contracts/sse-events.schema.json`), only one file changes. The scaffolded test surfaces the change automatically on the next regeneration.
@@ -130,13 +130,13 @@ The fixture validates because Step 1 copied both files from the same canonical p
 
 ## Step 3 — Mock orchestrator for offline dev (configure dev profile only)
 
-`MockOrchestratorClient.kt` is generated in **playbook 03 Unit 9b Step F** (the backend phase, before this contract-tests phase). This step does not regenerate the class — emitting it here would create a phase-ordering compile error, since `DevDoubleGateTest` in phase 03 Unit 9b needs `MockOrchestratorClient` on the classpath when it runs. Instead, this step:
+`MockOrchestratorClient.kt` is generated in **playbook 03 Unit 9b Step C** (the backend phase, before this contract-tests phase). This step does not regenerate the class — emitting it here would create a phase-ordering compile error, since `DevDoubleGateTest` in phase 03 Unit 9b needs `MockOrchestratorClient` on the classpath when it runs. Instead, this step:
 
 1. Confirms the mock was generated correctly in phase 03 (path: `backend/src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt`, gated by `@DevOnlyBean`).
 2. Generates `application-mock.yml` to flip the single dev-double gate into the `mock` Spring profile.
 3. Documents the dev runner invocation.
 
-**Single-gate invariant (read first).** There is exactly one path to activate any dev/test double across the scaffolded backend: `app.dev-doubles.enabled=true`. Do not introduce parallel properties like `orchestrator.mock-enabled`. `DevDoubleGateTest` (playbook 03 Unit 9b Step C) enforces this; a parallel switch creates a second activation path that bypasses the gate and lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied.
+**Single-gate invariant (read first).** There is exactly one path to activate any dev/test double across the scaffolded backend: `app.dev-doubles.enabled=true`. Do not introduce parallel properties like `orchestrator.mock-enabled`. `DevDoubleGateTest` (playbook 03 Unit 9b Step D) enforces this; a parallel switch creates a second activation path that bypasses the gate and lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied.
 
 **`application-mock.yml`** — single property only:
 

@@ -352,6 +352,7 @@ The dev-double gate has two enforcement layers, each implemented as a separate J
 // src/test/kotlin/com/example/rag/config/DevDoubleGateTest.kt
 package com.example.rag.config
 
+import com.example.rag.config.OrchestratorProperties              // ConfigurationProperties bean (Unit 4)
 import com.example.rag.config.annotations.DevOnlyBean
 // REQUIRED: enumerate every dev-double class generated in this unit. Right now Step C
 // only generates MockOrchestratorClient. If you later add @Bean-method dev doubles inside
@@ -361,9 +362,25 @@ import com.example.rag.config.annotations.DevOnlyBean
 import com.example.rag.dev.MockOrchestratorClient            // @DevOnlyBean @Component (Step C above)
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 
 class DevDoubleGateTest {
+
+    /**
+     * MockOrchestratorClient (Step C) constructor-injects OrchestratorProperties.
+     * ApplicationContextRunner does NOT auto-register @ConfigurationProperties beans;
+     * without this @TestConfiguration the slice fails to start with an unsatisfied
+     * dependency and the gate assertions never execute (test passes for the wrong reason).
+     *
+     * REQUIRED: keep `withPropertyValues` keys aligned with the @ConfigurationProperties
+     * prefix declared on OrchestratorProperties in Unit 4 (`orchestrator.url`,
+     * `orchestrator.api-key` per `application.yml`). Mismatch → bind error → false failure.
+     */
+    @TestConfiguration
+    @EnableConfigurationProperties(OrchestratorProperties::class)
+    class TestPropsConfig
 
     private val devDoubleNamePattern =
         Regex("^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)", RegexOption.IGNORE_CASE)
@@ -375,7 +392,12 @@ class DevDoubleGateTest {
      * (its check is independent of this slice).
      */
     private val contextRunner: ApplicationContextRunner = ApplicationContextRunner()
+        .withPropertyValues(
+            "orchestrator.url=http://localhost:0/orchestrator",
+            "orchestrator.api-key=devdouble-gate-test-stub",
+        )
         .withUserConfiguration(
+            TestPropsConfig::class.java,                     // satisfies MockOrchestratorClient ctor dep
             MockOrchestratorClient::class.java,
             // ADD MORE: every @Configuration / @Component class that defines or imports
             // a dev/test double belongs in this list. The classpath-scan test
