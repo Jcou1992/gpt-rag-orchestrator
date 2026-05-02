@@ -316,6 +316,7 @@ import com.example.rag.web.dto.UserContext                        // request DTO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.springframework.context.annotation.Primary
 import org.springframework.stereotype.Component
 
 /**
@@ -326,7 +327,15 @@ import org.springframework.stereotype.Component
  * Path is documented under playbook 04 Step 3, but the file itself lives here
  * because phase-03 tests (DevDoubleGateTest, OboValidationTest) reference it.
  */
+// @Primary disambiguates bean resolution when BOTH this mock and the real
+// WebClient OrchestratorClient (Unit 5) are on the classpath. Without it,
+// Spring throws NoUniqueBeanDefinitionException at startup of any context
+// that has app.dev-doubles.enabled=true (e.g., the `mock` profile + the
+// DevDoubleGateTest positive-registration test). The @DevOnlyBean gate
+// keeps the mock out of prod entirely, so @Primary cannot accidentally
+// override the real bean in production.
 @DevOnlyBean
+@Primary
 @Component
 class MockOrchestratorClient(
     val properties: OrchestratorProperties,

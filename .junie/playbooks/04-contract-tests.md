@@ -135,11 +135,11 @@ The fixture validates because Step 1 copied both files from the same canonical p
 
 ---
 
-## Step 3 — Mock orchestrator for offline dev (configure dev profile only)
+## Step 3 — Mock orchestrator for offline dev (configure mock profile only)
 
 `MockOrchestratorClient.kt` is generated in **playbook 03 Unit 9b Step C** (the backend phase, before this contract-tests phase). This step does not regenerate the class — emitting it here would create a phase-ordering compile error, since `DevDoubleGateTest` in phase 03 Unit 9b needs `MockOrchestratorClient` on the classpath when it runs. Instead, this step:
 
-1. Confirms the mock was generated correctly in phase 03 (path: `backend/src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt`, gated by `@DevOnlyBean`).
+1. Confirms the mock was generated correctly in phase 03 (path: `backend/src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt`, gated by `@DevOnlyBean` AND marked `@Primary` to win over the real `OrchestratorClient` from Unit 5 when both beans are on the classpath — required to avoid `NoUniqueBeanDefinitionException`).
 2. Generates `application-mock.yml` to flip the single dev-double gate into the `mock` Spring profile.
 3. Documents the dev runner invocation.
 

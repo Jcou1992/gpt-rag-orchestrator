@@ -1,6 +1,7 @@
 # GPT-RAG Orchestrator — Plan de Integración con Vue 3 + Spring Boot
 
-> **Stack objetivo:** Vue 3 + Vuetify + Vite (TypeScript) · Kotlin + Spring Boot · Azure
+> **Stack objetivo:** Vue 3 + Vuetify + Vite · Kotlin + Spring Boot · Azure
+> **Frontend language:** JavaScript por defecto (alineado con `.junie/guidelines.md` y la base actual del equipo). TypeScript queda como variante opt-in en `01-preflight`; los snippets `.ts` de §4 más abajo son la forma TS equivalente y deben leerse como `.js` cuando se mantiene el default.
 > **Objetivo:** Embeber el orchestrator en una webapp propia y evolucionar hacia ejecución agentic.
 
 ---
@@ -237,10 +238,12 @@ backend/
 
 ### 4.2 Frontend (Vue 3 + Vuetify + Vite)
 
+> El árbol de abajo muestra la variante **TypeScript** (opt-in). Para el default JavaScript, sustituye `.ts` por `.js` y elimina `src/types/rag.ts`. La estructura, los nombres de carpeta y la matriz de archivos no cambian entre variantes — solo la extensión y la presencia de tipos.
+
 ```
 frontend/
 ├── package.json
-├── vite.config.ts
+├── vite.config.{js,ts}                  # .js por default; .ts si se opta por TypeScript
 └── src/
     ├── components/rag/
     │   ├── RagChat.vue                 # componente embebible
@@ -248,14 +251,18 @@ frontend/
     │   ├── RagCitation.vue             # chip con doc/link
     │   └── RagInput.vue
     ├── composables/
-    │   ├── useRagChat.ts               # estado + streaming
-    │   └── useSseClient.ts             # fetchEventSource wrapper
+    │   ├── useRagChat.{js,ts}          # estado + streaming
+    │   └── useSseClient.{js,ts}        # fetchEventSource wrapper
     ├── services/
-    │   └── ragApi.ts                   # wrapper HTTP
+    │   ├── auth.{js,ts}                # adapter — delega a msalConfig.js
+    │   ├── auth-stub.{js,ts}           # dev-only stub (resuelve por alias en Vite)
+    │   └── ragApi.{js,ts}              # wrapper HTTP
+    ├── auth/
+    │   └── msalConfig.{js,ts}          # MSAL hardened (R11) — única fuente de getToken
     ├── types/
-    │   └── rag.ts
+    │   └── rag.ts                      # solo en variante TypeScript
     └── plugins/
-        └── markdown.ts                 # marked + highlight.js + DOMPurify
+        └── markdown.{js,ts}            # marked + highlight.js + DOMPurify
 ```
 
 ---
