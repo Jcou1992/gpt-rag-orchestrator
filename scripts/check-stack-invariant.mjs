@@ -69,7 +69,9 @@ function* iterateCodeBlocks(text) {
   let buffer = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fence = line.match(/^```([a-zA-Z0-9_+-]*)\s*$/);
+    // Markdown spec allows up to 3 leading spaces before a fenced block.
+    // Without the prefix, indented Kotlin/Java fences silently bypass the scan.
+    const fence = line.match(/^\s{0,3}```([a-zA-Z0-9_+-]*)\s*$/);
     if (fence) {
       if (!inBlock) {
         inBlock = true;

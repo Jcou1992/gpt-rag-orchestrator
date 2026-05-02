@@ -1125,13 +1125,7 @@ Stream RAG chat responses.
 }
 \`\`\`
 
-**Response (SSE):**
-\`\`\`
-data: {"type":"conversationId","value":"c-123"}
-data: {"type":"chunk","text":"The refund..."}
-data: {"type":"citation","title":"Manual","url":"https://..."}
-data: {"type":"done"}
-\`\`\`
+**Response (SSE):** see canonical event examples at [`.junie/contracts/sse-events.examples.json`](../../.junie/contracts/sse-events.examples.json) (also copied into the scaffolded target's `contract-tests/fixtures/sse-events.examples.json` by playbook 04 Step 1). Five event types — `conversationId`, `chunk`, `citation`, `done`, `error` — validated against `.junie/contracts/sse-events.schema.json`. Do not restate event payloads here; the canonical fixture is the only source.
 
 (Auto-extract from `@RequestMapping`, `@PostMapping`, Javadoc)
 
