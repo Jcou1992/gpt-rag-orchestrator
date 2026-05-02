@@ -26,7 +26,13 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = resolve(__filename, '..', '..');
-const playbookDir = join(repoRoot, '.junie', 'playbooks');
+// Target directory override. Production runs use the canonical
+// `.junie/playbooks` tree. The harness in `tests/invariants/` overrides
+// via `JUNIE_PLAYBOOKS_DIR` so the same script can be exercised against
+// known-bad fixtures and asserted to exit non-zero.
+const playbookDir = process.env.JUNIE_PLAYBOOKS_DIR
+  ? resolve(process.env.JUNIE_PLAYBOOKS_DIR)
+  : join(repoRoot, '.junie', 'playbooks');
 
 /**
  * Recursively collect every `*.md` file under `dir`.

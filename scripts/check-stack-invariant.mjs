@@ -12,12 +12,19 @@
 // Run from repo root: `node scripts/check-stack-invariant.mjs`
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+// Target dir override (see check-r5-invariant.mjs for rationale —
+// the harness in `tests/invariants/` exercises the script against
+// fixtures and asserts non-zero exit). `resolve` accepts both absolute
+// and relative paths; relative paths resolve against the current cwd
+// of the harness, which is what we want.
 const TARGET_DIRS = [
-  join(REPO_ROOT, '.junie/playbooks'),
+  process.env.JUNIE_PLAYBOOKS_DIR
+    ? resolve(process.env.JUNIE_PLAYBOOKS_DIR)
+    : join(REPO_ROOT, '.junie/playbooks'),
 ];
 
 // Forbidden tokens, scoped to Kotlin/Java fenced blocks. Each entry: { token, why }.

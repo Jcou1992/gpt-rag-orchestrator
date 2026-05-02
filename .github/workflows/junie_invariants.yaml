@@ -21,6 +21,7 @@ on:
     paths:
       - '.junie/**'
       - 'scripts/check-*.mjs'
+      - 'tests/invariants/**'
       - 'INTEGRATION_PLAN.md'
       - '.github/workflows/junie_invariants.yaml'
   push:
@@ -32,6 +33,7 @@ on:
     paths:
       - '.junie/**'
       - 'scripts/check-*.mjs'
+      - 'tests/invariants/**'
       - 'INTEGRATION_PLAN.md'
       - '.github/workflows/junie_invariants.yaml'
 
@@ -48,6 +50,20 @@ jobs:
         with:
           node-version: '20'
 
+      # NEGATIVE-CONTROL HARNESS RUNS FIRST.
+      #
+      # Closes round-31 adversarial finding: a CI workflow that only runs
+      # the production scan can be made green by weakening the script
+      # itself in the same PR. The harness runs each invariant script
+      # against committed known-bad fixtures and asserts non-zero exit
+      # plus the right violation sentinel in output. If a contributor
+      # weakens an invariant, the harness FAILS BEFORE the production
+      # scan and the workflow exits red — the production scan's clean
+      # result alone is no longer enough to merge.
+      - name: Negative-control harness — invariant scripts reject known-bad fixtures
+        run: node tests/invariants/run-harness.mjs
+
+      # Production scan — run only if the harness passed.
       - name: R5 invariant — no inline SSE schema duplication
         run: node scripts/check-r5-invariant.mjs
 

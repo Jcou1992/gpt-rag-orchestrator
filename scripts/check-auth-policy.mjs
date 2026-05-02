@@ -23,12 +23,17 @@
 // Run from repo root: `node scripts/check-auth-policy.mjs`
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+// Target dir override (see check-r5-invariant.mjs for rationale —
+// the harness in `tests/invariants/` exercises the script against
+// fixtures and asserts non-zero exit).
 const TARGET_DIRS = [
-  join(REPO_ROOT, '.junie/playbooks'),
+  process.env.JUNIE_PLAYBOOKS_DIR
+    ? resolve(process.env.JUNIE_PLAYBOOKS_DIR)
+    : join(REPO_ROOT, '.junie/playbooks'),
 ];
 
 // Substring-matched forbidden tokens. Each rule: { pattern, why }.
