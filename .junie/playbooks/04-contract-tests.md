@@ -457,21 +457,37 @@ const projectRoot = resolve(__dirname, '..');
 // means the regression check is checking a stale string.
 const GUARD_SENTINEL = 'vite build --mode local-auth is forbidden';
 
-// Locate the local vite binary so we don't depend on PATH.
-const viteBin = resolve(
-  projectRoot,
-  process.platform === 'win32' ? 'node_modules/.bin/vite.cmd' : 'node_modules/.bin/vite',
-);
-if (!existsSync(viteBin)) {
-  console.error(`[check-no-local-auth-build] vite binary not found at ${viteBin}. Run \`pnpm install\` first.`);
+// Locate Vite's CLI script and invoke it via process.execPath. We do NOT
+// use node_modules/.bin/vite.cmd on Windows because .cmd shims are shell
+// scripts; spawnSync(..., { shell: false }) cannot launch them, and
+// shell: true would re-introduce the cross-shell quoting hazards Step 5b
+// is supposed to close. Calling vite.js through process.execPath is
+// platform-agnostic, shell-free, and matches what npm/pnpm do internally.
+const viteCli = resolve(projectRoot, 'node_modules/vite/bin/vite.js');
+if (!existsSync(viteCli)) {
+  console.error(`[check-no-local-auth-build] Vite CLI not found at ${viteCli}.`);
+  console.error('  Run `pnpm install` (or `npm install`) before running this check.');
   process.exit(1);
 }
 
-const result = spawnSync(viteBin, ['build', '--mode', 'local-auth'], {
-  cwd: projectRoot,
-  encoding: 'utf8',
-  shell: false,
-});
+const result = spawnSync(
+  process.execPath,
+  [viteCli, 'build', '--mode', 'local-auth'],
+  {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    shell: false,
+  },
+);
+
+// Distinguish "could not launch Node/Vite" (result.error set, status null)
+// from "launched and failed/passed". A launch failure must not be silently
+// reinterpreted as a guard regression OR a guard hit — both would mislead.
+if (result.error) {
+  console.error('[check-no-local-auth-build] FAIL: could not launch Vite.');
+  console.error(`  ${result.error.message}`);
+  process.exit(1);
+}
 
 if (result.status === 0) {
   console.error('[check-no-local-auth-build] FAIL: vite build --mode local-auth EXITED ZERO.');
