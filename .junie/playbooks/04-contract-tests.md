@@ -433,19 +433,27 @@ const isDevMode = mode === 'development' || mode === 'test';
 const isLocalRedirectAllowed = ALLOWS_LOCAL_REDIRECT.has(mode);
 
 // Loopback hostname detector: `localhost`, every IPv4 in 127.0.0.0/8, and
-// IPv6 `::1` (with optional zone). A simple `/localhost/` regex misses
-// `https://127.0.0.1:5173` and `https://[::1]:5173`, both of which Microsoft
-// Identity treats as loopback and which MSAL will redirect to in dev.
+// IPv6 `::1`. A simple `/localhost/` regex misses `https://127.0.0.1:5173`
+// and `https://[::1]:5173`, both of which Microsoft Identity treats as
+// loopback and which MSAL will redirect to in dev.
+//
+// IPv6 caveat: in Node.js (WHATWG URL), `new URL('http://[::1]:5173').hostname`
+// returns `'[::1]'` WITH the surrounding brackets — different from the bare
+// `::1` that DOM URL implementations sometimes return. We strip a leading/
+// trailing bracket pair before comparing so both shapes are caught. Quick
+// sanity:
+//   new URL('http://[::1]:5173').hostname  // → '[::1]'  (Node)
+//   '[::1]'.replace(/^\[|\]$/g, '')        // → '::1'
 function isLoopbackHost(value) {
   if (typeof value !== 'string') return false;
   let url;
   try { url = new URL(value); } catch { return false; }
-  const host = url.hostname.toLowerCase();
+  // Normalize: lowercase, strip IPv6 brackets if present.
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost') return true;
   // 127.0.0.0/8 — the entire 127.x.y.z block is loopback per RFC 3330.
   if (/^127(?:\.\d{1,3}){3}$/.test(host)) return true;
-  // IPv6 loopback: ::1 (with or without an explicit zone). URL.hostname strips
-  // the surrounding brackets, leaving the literal '::1'.
+  // IPv6 loopback: ::1.
   if (host === '::1') return true;
   return false;
 }
