@@ -300,7 +300,7 @@ export async function callRagApi(payload) {
 After `vite build`, run a dedicated leak test that asserts the dev auth-stub did not make it into the production bundle. Two layers, defense in depth:
 
 1. **Manifest layer (primary; minification-stable):** the Rollup manifest names every entry source. We assert no entry references `auth-stub`. Note that Vite's manifest `src` field lists entry chunks only, not transitive imports — so we treat the manifest assertion as defense in depth, NOT as a complete guarantee.
-2. **Sentinel layer (defense in depth):** we recursively walk the entire `dist/` tree and grep every `.js` file's content for the pre-committed sentinel UUID. Zero matches is the pass condition. The recursive walk uses `fs.readdirSync(dist, { recursive: true })` (Node 20+) rather than a glob library, because some glob implementations miss hashed asset directories.
+2. **Sentinel layer (defense in depth):** we recursively walk the entire `dist/` tree and grep every `.js` file's content for the pre-committed sentinel UUID. Zero matches is the pass condition. The walk is implemented as a manual recursive function over `readdirSync(dir, { withFileTypes: true })` (works on Node 18+) rather than the Node-20-only `{ recursive: true }` flag — that flag is silently dropped on Node 18 and would skip hashed asset subdirectories like `dist/assets/`, producing a vacuous pass. Glob libraries are also avoided because some skip hashed asset directories outright.
 3. **Filename guard:** no asset basename under `dist/` may contain `auth-stub`.
 4. **False-pass guard:** `dist/` must exist and be non-empty. If a previous build was wiped and the leak test runs anyway, it would otherwise vacuously pass.
 
@@ -403,40 +403,70 @@ Per R11, the scaffolded `msalConfig.js` template is hardened against four common
 ```javascript
 import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
 
-// Reject these placeholder values at startup — they almost always indicate
-// the developer copied the template without filling in tenant-specific
-// values, and shipping them produces a confusing runtime auth failure
-// instead of a clear config error.
-const PLACEHOLDER_VALUES = new Set([
+// Substring-aware placeholder tokens. We do NOT use Set.has(value) here:
+// real misconfig is almost always a TEMPLATED string (e.g.
+// "https://login.microsoftonline.com/YOUR_TENANT_ID") rather than a literal
+// "YOUR_TENANT_ID". Exact equality silently lets templated placeholders pass.
+const PLACEHOLDER_TOKENS = [
   'YOUR_CLIENT_ID',
   'YOUR_TENANT_ID',
   'YOUR_AUTHORITY',
   'YOUR_REDIRECT_URI',
-  '',
-  undefined,
-  null,
-]);
+  'YOUR_API_SCOPE',
+  '<tenant>',
+  '<tenant-id>',
+  '<client-id>',
+  '<redirect-uri>',
+  'TODO',
+  'CHANGE_ME',
+];
 
 // Three modes that talk to a real MSAL on a developer machine: the two Vite
 // dev modes that resolve auth-stub.js, plus `local-auth` (described in the
-// offline-dev section below — real MSAL but a localhost redirect URI is OK).
+// offline-dev section below — real MSAL but a loopback redirect URI is OK).
 // `production` is intentionally NOT in this list; a production build with a
-// localhost redirect URI is a misconfigured deploy and must fail loud.
+// loopback redirect URI is a misconfigured deploy and must fail loud.
 const ALLOWS_LOCAL_REDIRECT = new Set(['development', 'test', 'local-auth']);
 
 const mode = import.meta.env.MODE;
 const isDevMode = mode === 'development' || mode === 'test';
 const isLocalRedirectAllowed = ALLOWS_LOCAL_REDIRECT.has(mode);
 
+// Loopback hostname detector: `localhost`, every IPv4 in 127.0.0.0/8, and
+// IPv6 `::1` (with optional zone). A simple `/localhost/` regex misses
+// `https://127.0.0.1:5173` and `https://[::1]:5173`, both of which Microsoft
+// Identity treats as loopback and which MSAL will redirect to in dev.
+function isLoopbackHost(value) {
+  if (typeof value !== 'string') return false;
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost') return true;
+  // 127.0.0.0/8 — the entire 127.x.y.z block is loopback per RFC 3330.
+  if (/^127(?:\.\d{1,3}){3}$/.test(host)) return true;
+  // IPv6 loopback: ::1 (with or without an explicit zone). URL.hostname strips
+  // the surrounding brackets, leaving the literal '::1'.
+  if (host === '::1') return true;
+  return false;
+}
+
 function isPlaceholder(value) {
-  if (PLACEHOLDER_VALUES.has(value)) return true;
+  if (value === '' || value === undefined || value === null) return true;
   if (typeof value !== 'string') return true;
-  // Localhost redirect URIs are accepted ONLY in modes explicitly allow-listed
+  // Trim then substring-scan against every known placeholder token.
+  // Templated values like `https://login.microsoftonline.com/YOUR_TENANT_ID`
+  // are caught here; exact-equality matching silently let them through.
+  const trimmed = value.trim();
+  if (trimmed === '') return true;
+  for (const token of PLACEHOLDER_TOKENS) {
+    if (trimmed.includes(token)) return true;
+  }
+  // Loopback redirect URIs are accepted ONLY in modes explicitly allow-listed
   // above. Treating them as a placeholder in `production` keeps a misconfigured
   // deploy from silently shipping; treating them as valid in `local-auth` lets
-  // a developer run real MSAL against http://localhost:5173 without re-routing
-  // through a tunneling service.
-  if (!isLocalRedirectAllowed && /^https?:\/\/localhost(:\d+)?(\/|$)/i.test(value)) return true;
+  // a developer run real MSAL against http://localhost:5173 (or 127.0.0.1, or
+  // [::1]) without re-routing through a tunneling service.
+  if (!isLocalRedirectAllowed && isLoopbackHost(trimmed)) return true;
   return false;
 }
 
