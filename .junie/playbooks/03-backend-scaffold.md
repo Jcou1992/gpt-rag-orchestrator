@@ -147,6 +147,341 @@ After each unit:
 
 ---
 
+### Unit 9b: Profile-gated dev-double + OBO JWT integration tests
+
+**Why this unit exists.** Frontend hardening (playbook 04 leak test) is decorative without a matching backend gate plus real token validation on the wire. This unit closes both: (a) every dev/test-double bean is property-gated fail-closed, and (b) `oauth2ResourceServer().jwt()` is wired with JWKS URI, audience, and issuer so unsigned/forged tokens are rejected at the boundary. The two integration tests below — `DevDoubleGateTest` and `OboValidationTest` — fail the build whenever either gate regresses.
+
+**Files:**
+- `src/main/kotlin/com/example/config/annotations/DevOnlyBean.kt`
+- `src/main/kotlin/com/example/config/SecurityConfig.kt` (extend Unit 6 output)
+- `src/main/resources/application.yml` (add `app.dev-doubles.enabled` + `app.entra.*` properties)
+- `src/test/kotlin/com/example/config/DevDoubleGateTest.kt`
+- `src/test/kotlin/com/example/security/OboValidationTest.kt`
+
+#### Step A — Define the `@DevOnlyBean` meta-annotation (load-bearing primary control)
+
+A single class-level `@ConditionalOnProperty` on a `@Configuration` class does not auto-cascade to its `@Bean` methods unless the methods are individually annotated. To make the property gate cascade uniformly across both top-level `@Component` classes AND `@Bean` methods inside `@Configuration` classes, define `@DevOnlyBean` as a Spring **meta-annotation** that itself carries the `@ConditionalOnProperty`. Anywhere `@DevOnlyBean` is placed — class or method — the property check rides along.
+
+This cascading behavior is why we need a meta-annotation rather than a plain marker. A plain marker would force authors to remember to add `@ConditionalOnProperty` on every site, which is exactly the bypass we are trying to prevent.
+
+**Convention:** every dev/test-double bean class OR `@Bean` method MUST carry `@DevOnlyBean`. The bean-name regex check in `DevDoubleGateTest` (Step C) is defense-in-depth for the case where someone forgets the marker.
+
+```kotlin
+// src/main/kotlin/com/example/config/annotations/DevOnlyBean.kt
+package com.example.config.annotations
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import java.lang.annotation.ElementType
+import java.lang.annotation.Retention
+import java.lang.annotation.RetentionPolicy
+import java.lang.annotation.Target
+
+/**
+ * Meta-annotation marking a bean (class) or @Bean method as a dev/test double.
+ *
+ * Composes @ConditionalOnProperty(name = "app.dev-doubles.enabled",
+ *   havingValue = "true", matchIfMissing = false) so the property gate cascades
+ * to @Bean methods inside @Configuration classes — not just to top-level
+ * @Component classes. Fail-closed: if the property is unset, the bean is NOT
+ * registered.
+ *
+ * Convention: every dev/test-double bean MUST carry this annotation.
+ * DevDoubleGateTest fails the build if a bean carrying this annotation
+ * registers without app.dev-doubles.enabled=true.
+ */
+@Target(ElementType.TYPE, ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+@ConditionalOnProperty(
+    name = ["app.dev-doubles.enabled"],
+    havingValue = "true",
+    matchIfMissing = false,
+)
+annotation class DevOnlyBean
+```
+
+**Usage at the bean site (class-level):**
+
+```kotlin
+// e.g., src/main/kotlin/com/example/dev/MockOrchestratorClient.kt
+@DevOnlyBean
+@Component
+class MockOrchestratorClient : OrchestratorClient { /* ... */ }
+```
+
+**Usage at the bean site (method-level — why the meta-annotation matters):**
+
+```kotlin
+@Configuration
+class DevDoublesConfig {
+    @DevOnlyBean   // the @ConditionalOnProperty cascades from the meta-annotation
+    @Bean
+    fun fakeAuthClient(): AuthClient = FakeAuthClient()
+}
+```
+
+#### Step B — Property convention (`application.yml`)
+
+| Profile / file | `app.dev-doubles.enabled` |
+|---|---|
+| `application.yml` (production default) | `false` (explicit) |
+| `application-test.yml` | unset (or `false`) |
+| `application-dev.yml` | `true` |
+
+```yaml
+# application.yml (production default — explicit fail-closed)
+app:
+  dev-doubles:
+    enabled: false
+  entra:
+    jwks-uri: ${ENTRA_JWKS_URI}      # no default — missing → app fails to start
+    audience: ${ENTRA_AUDIENCE}       # no default
+    issuer: ${ENTRA_ISSUER}           # no default
+```
+
+Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). Only the `dev` profile flips it to `true`.
+
+#### Step C — `DevDoubleGateTest` (R7b): use `ApplicationContextRunner`, NOT `@SpringBootTest`
+
+**Why `ApplicationContextRunner`.** `@SpringBootTest` boots the full application context. If a collaborator depends on a dev-double-only bean (legitimately gated off in this test), `@SpringBootTest` fails to bootstrap with `NoSuchBeanDefinitionException` — masquerading as a gate failure when it is really a context-wiring problem. `ApplicationContextRunner` lets the test load only the relevant configuration (sliced context), so we are testing the gate, not the wiring.
+
+The test has TWO assertions, run with `app.dev-doubles.enabled` UNSET:
+
+1. No bean carrying `@DevOnlyBean` registers.
+2. No bean whose simple class name matches the case-insensitive regex `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` registers.
+
+**Bean-name regex (literal):** `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)`
+
+**Documented false-positive class.** A bean named `MockingjayController` would match this regex and the test would (correctly, per its design) fail. The marker annotation `@DevOnlyBean` is the load-bearing primary control; the regex is defense-in-depth. Teams that hit a legitimate false positive should rename the bean OR refine the regex with a word-boundary tweak, but they MUST keep the marker check primary — the regex alone is not sufficient because it cannot detect well-named-but-still-fake beans.
+
+```kotlin
+// src/test/kotlin/com/example/config/DevDoubleGateTest.kt
+package com.example.config
+
+import com.example.config.annotations.DevOnlyBean
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.test.context.runner.ApplicationContextRunner
+
+class DevDoubleGateTest {
+
+    private val devDoubleNamePattern =
+        Regex("^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)", RegexOption.IGNORE_CASE)
+
+    private val contextRunner: ApplicationContextRunner = ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(/* the production config slice under test */))
+        // NOTE: app.dev-doubles.enabled is intentionally NOT set here.
+        // matchIfMissing = false on the meta-annotation makes the absence fail-closed.
+
+    @Test
+    fun `no @DevOnlyBean-marked bean registers when app dev-doubles enabled is unset`() {
+        contextRunner.run { context ->
+            val markedBeans = context.getBeansWithAnnotation(DevOnlyBean::class.java).keys
+            assertThat(markedBeans)
+                .withFailMessage(
+                    "FAIL THE BUILD: dev-double beans registered without " +
+                        "app.dev-doubles.enabled=true. Offending: %s",
+                    markedBeans,
+                )
+                .isEmpty()
+        }
+    }
+
+    @Test
+    fun `no bean whose simple class name matches the dev-double regex registers`() {
+        contextRunner.run { context ->
+            val offenders = context.beanDefinitionNames
+                .mapNotNull { name -> runCatching { context.getBean(name)::class.java.simpleName to name }.getOrNull() }
+                .filter { (simpleName, _) -> devDoubleNamePattern.containsMatchIn(simpleName) }
+                .map { (simpleName, beanName) -> "$beanName (class=$simpleName)" }
+
+            assertThat(offenders)
+                .withFailMessage(
+                    "FAIL THE BUILD: bean(s) match dev-double name regex " +
+                        "(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop) without the gate. " +
+                        "Offenders: %s. If this is a legitimate false positive (e.g., MockingjayController), " +
+                        "rename the bean or refine the regex — but keep @DevOnlyBean as the primary control.",
+                    offenders,
+                )
+                .isEmpty()
+        }
+    }
+}
+```
+
+**Failure modes this test catches:**
+- A developer adds `@Component class MockFooClient` without `@DevOnlyBean` → name regex fires.
+- A developer adds `@DevOnlyBean class FakeAuthClient` but the property gate misfires → annotation check fires.
+- A developer hand-rolls `@ConditionalOnProperty` on a class but forgets the marker → name regex fires (defense-in-depth).
+- Bean named `MockingjayController` registers → test correctly fires (documented false positive — rename or refine regex; do NOT remove marker check).
+
+**Integration check (no regression of dev workflow):** with `app.dev-doubles.enabled=true` set on the runner via `.withPropertyValues("app.dev-doubles.enabled=true")`, dev-double beans DO load — confirm by switching the runner config in a separate test method.
+
+#### Step D — OBO JWT validation in `SecurityConfig` (R6c)
+
+Spring Security `oauth2ResourceServer().jwt()` is configured against the Entra ID JWKS URI with required `aud` and expected `iss`. Properties have **no defaults** — a missing property fails the app at startup, not at first request. This prevents silent acceptance of unsigned tokens.
+
+**CSRF posture decision (same step):** scaffold `http.csrf(AbstractHttpConfigurer::disable)` for stateless JWT-authenticated endpoints. Safety rationale: CSRF defends against cookie-based credential injection (browsers auto-attach cookies to cross-origin requests). Bearer headers cannot be auto-injected cross-origin — the attacker cannot read the token from another origin (CORS) and cannot make the browser attach it (no equivalent of the `SameSite` cookie behavior for `Authorization`). For a stateless JWT API with no cookie auth, CSRF protection is theatre and breaks legitimate clients that don't fetch a CSRF token.
+
+```kotlin
+// src/main/kotlin/com/example/config/SecurityConfig.kt
+package com.example.config
+
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer
+import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.security.oauth2.jwt.JwtValidators
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
+import org.springframework.security.oauth2.jwt.JwtClaimValidator
+import org.springframework.security.oauth2.core.OAuth2TokenValidator
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
+import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.security.web.SecurityFilterChain
+
+@Configuration
+class SecurityConfig(
+    @Value("\${app.entra.jwks-uri}") private val jwksUri: String,         // no default — missing → boot fails
+    @Value("\${app.entra.audience}") private val expectedAudience: String, // required `aud` claim
+    @Value("\${app.entra.issuer}")   private val expectedIssuer: String,   // expected `iss` claim
+) {
+
+    @Bean
+    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+        http
+            // CSRF: disabled for stateless JWT endpoints. Bearer headers cannot be cross-origin-injected
+            // by a browser (CORS prevents read; no auto-attach behavior for Authorization). CSRF only
+            // matters for cookie-based credentials. See Unit 9b CSRF posture decision.
+            .csrf { it.disable() }
+            .authorizeHttpRequests { auth ->
+                auth.anyRequest().authenticated()
+            }
+            .oauth2ResourceServer { oauth2 ->
+                oauth2.jwt { jwt -> jwt.decoder(jwtDecoder()) }
+            }
+        return http.build()
+    }
+
+    @Bean
+    fun jwtDecoder(): JwtDecoder {
+        // JWKS-backed signature verification — keys fetched from Entra at the JWKS URI.
+        val decoder = NimbusJwtDecoder.withJwkSetUri(jwksUri).build()
+
+        // Validate iss claim
+        val issValidator = JwtValidators.createDefaultWithIssuer(expectedIssuer)
+        // Validate aud claim
+        val audValidator: OAuth2TokenValidator<Jwt> = JwtClaimValidator("aud") { claim ->
+            when (claim) {
+                is String -> claim == expectedAudience
+                is Collection<*> -> claim.contains(expectedAudience)
+                else -> false
+            }
+        }
+        decoder.setJwtValidator(DelegatingOAuth2TokenValidator(issValidator, audValidator))
+        return decoder
+    }
+}
+```
+
+#### Step E — `OboValidationTest` (R7c): real wire-level rejection
+
+This is a Spring integration test (`@SpringBootTest` with `@AutoConfigureMockMvc` is the recommended option below). It MUST cover all six cases — if any returns 200 when it should be 401, the build fails.
+
+**Two options for valid-token generation (recommended option called out):**
+
+1. **(RECOMMENDED) Stubbed JWK set served by WireMock + locally-signed JWT.** The test starts a WireMock server, points `app.entra.jwks-uri` at it, and the WireMock stub returns a JWK set whose private key is held by the test. The test signs JWTs locally with that key. Pros: zero CI dependency on a live tenant; deterministic; fast. Cons: writes the most code.
+2. **Real Entra ID test tenant.** The test fetches a real token from a dedicated test tenant during CI. Pros: validates against the real Entra contract. Cons: CI-credential cost (managing tenant creds, rate limits, network flakiness in CI). Not recommended unless contract drift against a real tenant is a primary risk.
+
+The example below uses option 1 (WireMock + locally-signed JWT) implicitly — production tests should wire WireMock setup in `@BeforeAll`.
+
+**Note on test framework choice:** WebTestClient (reactive) is an equivalent alternative to `MockMvc` if the scaffolded backend is fully reactive (WebFlux). Both options are documented; pick to match the controller stack from earlier units.
+
+```kotlin
+// src/test/kotlin/com/example/security/OboValidationTest.kt
+package com.example.security
+
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class OboValidationTest {
+
+    @Autowired private lateinit var mvc: MockMvc
+
+    // Implementations build these via WireMock'd JWKS + a locally-held signing key.
+    // (Stub JWK set is the recommended approach — see Step E narrative.)
+    private val malformedJwt: String = "this.is.not-a-jwt"
+    private val forgedJwt: String = TODO("structurally-valid JWT signed by a key NOT in the JWKS")
+    private val wrongAudienceJwt: String = TODO("JWT signed by JWKS key, but aud != app.entra.audience")
+    private val wrongIssuerJwt: String = TODO("JWT signed by JWKS key, but iss != app.entra.issuer")
+    private val validJwt: String = TODO("JWT signed by JWKS key, aud + iss match")
+
+    @Test fun `no Authorization header returns 401`() {
+        mvc.perform(get("/api/rag/ask")).andExpect(status().isUnauthorized)
+    }
+
+    @Test fun `malformed JWT returns 401`() {
+        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $malformedJwt"))
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test fun `forged JWT signed by wrong key returns 401`() {
+        // Structurally valid; signature verification against JWKS fails.
+        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $forgedJwt"))
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test fun `JWT with wrong aud claim returns 401`() {
+        // aud claim does not match app.entra.audience.
+        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $wrongAudienceJwt"))
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test fun `JWT with wrong iss claim returns 401`() {
+        // iss claim does not match app.entra.issuer.
+        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $wrongIssuerJwt"))
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test fun `valid JWT returns 200`() {
+        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $validJwt"))
+            .andExpect(status().isOk)
+    }
+}
+```
+
+#### Step F — Commit pattern
+
+Per existing TDD discipline:
+
+1. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleGateTest red`
+2. `test(rag-be): DevOnlyBean meta-annotation + DevDoubleGateTest green`
+3. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) + OboValidationTest red`
+4. `test(rag-be): SecurityConfig OBO JWT (jwks-uri, aud, iss) + OboValidationTest green`
+
+#### Step G — Verification (this unit fails the build when…)
+
+Both tests **fail the build** under the following conditions:
+
+**`DevDoubleGateTest` fails the build when:**
+- A `@DevOnlyBean`-marked bean registers without `app.dev-doubles.enabled=true`.
+- A bean whose simple class name matches `(?i)^(Mock|Stub|Fake|Spy|Dummy|TestDouble|InMemory|Noop)` registers without the property set.
+
+**`OboValidationTest` fails the build when:**
+- A request without `Authorization` header returns anything other than 401.
+- A malformed JWT, a forged JWT, a JWT with wrong `aud`, or a JWT with wrong `iss` returns anything other than 401.
+- A valid JWT does NOT return 200.
+
+---
+
 ## Step 3 — Integration with frontend
 
 After `RagController` (unit 7) passes:
