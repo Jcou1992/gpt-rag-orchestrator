@@ -153,7 +153,7 @@ orchestrator:
   api-key: ${ORCHESTRATOR_API_KEY:mock-key}
 ```
 
-`DevDoubleGateTest` (playbook 03 Unit 9b Step C) already includes `MockOrchestratorClient` in its `withUserConfiguration(...)` list — no changes required from this phase.
+`DevDoubleGateTest` (playbook 03 Unit 9b Step D) already includes `MockOrchestratorClient` in its `withUserConfiguration(...)` list — no changes required from this phase.
 
 Print:
 ```

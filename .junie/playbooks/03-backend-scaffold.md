@@ -290,11 +290,11 @@ data class UserContext(
 // src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt
 package com.example.rag.dev
 
-import com.example.rag.config.OrchestratorProperties             // configuration properties (Unit 5/6 output)
+import com.example.rag.config.OrchestratorProperties             // @ConfigurationProperties bean (Unit 4 output)
 import com.example.rag.config.annotations.DevOnlyBean             // gate marker (Step A)
-import com.example.rag.service.OrchestratorClient                 // service interface (Unit 7 output)
+import com.example.rag.service.OrchestratorClient                 // service interface (Unit 5 output)
 import com.example.rag.web.dto.AskChunk                           // sealed class — emitted variants (DTO, Unit 1 file list line 107)
-import com.example.rag.web.dto.UserContext                        // request DTO field (Unit 4 output)
+import com.example.rag.web.dto.UserContext                        // request DTO field (this unit, Step C — generated alongside this mock)
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
