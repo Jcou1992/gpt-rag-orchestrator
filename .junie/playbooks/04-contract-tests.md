@@ -422,25 +422,89 @@ Run with `pnpm build && pnpm test contract-tests/leak.spec.js`. The build must p
 
 **Step 5b — Build-mode regression check (closes round-22 adversarial bypass).**
 
-The build-time guard added to `vite.config.js` in Step 4 (`if (command === 'build' && mode === 'local-auth') throw`) MUST be exercised by an automated regression check so a future contributor cannot silently revert it. Add this single-line check to the scaffolded `package.json`'s `scripts` block, and gate `pnpm test` on it:
+The build-time guard added to `vite.config.js` in Step 4 (`if (command === 'build' && mode === 'local-auth') throw`) MUST be exercised by an automated regression check so a future contributor cannot silently revert it. The check needs three properties:
+
+1. Cross-shell portable. The scaffolded project may run under cmd.exe / PowerShell where POSIX `!` negation is not available. Node is the only runtime guaranteed across all targets (already required by `engines.node >= 20`).
+2. Asserts the specific guard error text, not just any non-zero exit. A `vite build` that fails for an unrelated reason (e.g., missing dependency) would otherwise pass the negation and silently mask a regressed guard.
+3. Wired directly into `package.json` and gated by `pnpm test` so CI cannot skip it.
+
+**`scripts/check-no-local-auth-build.mjs`** (scaffolded under the frontend root):
+
+```javascript
+#!/usr/bin/env node
+// Regression check for the vite.config.js build-time guard. Closes the
+// round-22 adversarial bypass: `vite build --mode local-auth` must FAIL
+// the build with the guard's specific error message — not pass, and not
+// fail for an unrelated reason.
+//
+// Exit codes:
+//   0  PASS — build failed AND stderr contained the guard sentinel substring.
+//   1  FAIL — build succeeded (guard regressed), OR build failed for a
+//             different reason (we did not actually exercise the guard).
+//
+// Cross-shell: pure Node. Works on cmd.exe, PowerShell, bash, zsh.
+
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const projectRoot = resolve(__dirname, '..');
+
+// Sentinel substring the guard's Error message must contain. Update both
+// here AND in vite.config.js if the guard wording changes — a mismatch
+// means the regression check is checking a stale string.
+const GUARD_SENTINEL = 'vite build --mode local-auth is forbidden';
+
+// Locate the local vite binary so we don't depend on PATH.
+const viteBin = resolve(
+  projectRoot,
+  process.platform === 'win32' ? 'node_modules/.bin/vite.cmd' : 'node_modules/.bin/vite',
+);
+if (!existsSync(viteBin)) {
+  console.error(`[check-no-local-auth-build] vite binary not found at ${viteBin}. Run \`pnpm install\` first.`);
+  process.exit(1);
+}
+
+const result = spawnSync(viteBin, ['build', '--mode', 'local-auth'], {
+  cwd: projectRoot,
+  encoding: 'utf8',
+  shell: false,
+});
+
+if (result.status === 0) {
+  console.error('[check-no-local-auth-build] FAIL: vite build --mode local-auth EXITED ZERO.');
+  console.error('  The build-time guard in vite.config.js has regressed; a poisoned bundle could ship.');
+  process.exit(1);
+}
+
+const combined = (result.stderr || '') + (result.stdout || '');
+if (!combined.includes(GUARD_SENTINEL)) {
+  console.error('[check-no-local-auth-build] FAIL: build failed but NOT for the guard reason.');
+  console.error(`  Expected stderr to contain: "${GUARD_SENTINEL}"`);
+  console.error('  Got:');
+  console.error(combined.split('\n').slice(0, 20).map((l) => '    ' + l).join('\n'));
+  process.exit(1);
+}
+
+console.log('[check-no-local-auth-build] PASS — build-time guard fired with expected message.');
+process.exit(0);
+```
+
+**`package.json` `scripts` block:**
 
 ```json
 {
   "scripts": {
     "build": "vite build",
     "test": "pnpm run check:no-local-auth-build && vitest run",
-    "check:no-local-auth-build": "! vite build --mode local-auth"
+    "check:no-local-auth-build": "node scripts/check-no-local-auth-build.mjs"
   }
 }
 ```
 
-The `! vite build --mode local-auth` invocation passes only when the inner command exits non-zero — i.e., when the guard threw. If the guard is removed, the build succeeds, the negated command fails, and `pnpm test` halts. Equivalent shell-portable form using `node` for cross-shell portability:
-
-```bash
-node -e "const { spawnSync } = require('child_process'); const r = spawnSync('vite', ['build','--mode','local-auth'], { stdio: 'inherit' }); process.exit(r.status === 0 ? 1 : 0);"
-```
-
-This regression check runs in CI alongside the leak test. A contributor who weakens the guard sees the failure before the artifact ships.
+The check runs in CI alongside the leak test. A contributor who weakens the guard sees the failure before the artifact ships, AND the failure points specifically at the build-mode guard rather than an opaque "build failed" — narrowing diagnosis.
 
 ---
 
