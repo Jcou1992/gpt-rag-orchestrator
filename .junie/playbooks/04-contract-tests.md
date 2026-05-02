@@ -430,7 +430,35 @@ const ALLOWS_LOCAL_REDIRECT = new Set(['development', 'test', 'local-auth']);
 
 const mode = import.meta.env.MODE;
 const isDevMode = mode === 'development' || mode === 'test';
-const isLocalRedirectAllowed = ALLOWS_LOCAL_REDIRECT.has(mode);
+
+// LOAD-BEARING: `import.meta.env.PROD` is `false` only when Vite is serving
+// from the dev server (`vite dev`); `vite build` always sets `PROD=true`,
+// regardless of `--mode`. Gating the loopback allow-list on `!PROD` closes
+// the round-21 adversarial bypass: `vite build --mode local-auth` would
+// otherwise bake `mode === 'local-auth'` into a production bundle while
+// still accepting loopback redirect URIs. Checking `mode` alone is NOT
+// enough — `mode` is just a build-time string. `PROD` is the only flag
+// Vite controls based on the actual command (dev vs build).
+const isLocalRedirectAllowed =
+  !import.meta.env.PROD && ALLOWS_LOCAL_REDIRECT.has(mode);
+
+// Defense-in-depth: a production build that explicitly opted into the
+// `local-auth` mode is always a misconfiguration. Fail loud at module load
+// before any redirect URI is even evaluated.
+if (import.meta.env.PROD && mode === 'local-auth') {
+  const root = (typeof document !== 'undefined')
+    ? (document.getElementById('app') || document.body)
+    : null;
+  if (root) {
+    root.innerHTML = `
+      <div role="alert" style="font-family:system-ui;padding:2rem;max-width:40rem;margin:4rem auto;border:1px solid #c00;border-radius:8px;">
+        <h1 style="color:#c00;margin-top:0;">Production build with a developer auth mode</h1>
+        <p>This bundle was built with <code>--mode local-auth</code>, which is a developer-machine convenience. Production builds must use the default <code>production</code> mode (which rejects loopback redirect URIs). Rebuild without <code>--mode local-auth</code> and redeploy.</p>
+      </div>
+    `;
+  }
+  throw new Error('msalConfig: PROD build with --mode local-auth is forbidden.');
+}
 
 // Loopback hostname detector. Covers four classes Microsoft Identity treats
 // as loopback and MSAL will redirect to in dev:
