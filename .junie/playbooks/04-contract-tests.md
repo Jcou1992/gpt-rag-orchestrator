@@ -418,7 +418,7 @@ describe('frontend leak test — dev auth-stub must not ship in prod bundle', ()
 });
 ```
 
-Run with `pnpm build && pnpm test contract-tests/leak.spec.js`. The build must precede the test; running the test without a fresh `dist/` fails the false-pass guard.
+Run via the dedicated `pnpm test:leak` script defined in Step 5b — it cleans `dist/`, runs `vite build`, then runs only the leak spec. Running the leak spec ad-hoc (`pnpm vitest run contract-tests/leak.spec.js`) without a fresh build either fails the false-pass guard (no `dist/`) or scans a stale bundle (older `dist/`); use the script to avoid both.
 
 **Step 5b — Build-mode regression check (closes round-22 adversarial bypass).**
 
@@ -510,17 +510,32 @@ process.exit(0);
 
 **`package.json` `scripts` block:**
 
+The leak spec needs a **fresh** `dist/` to be meaningful. Two failure modes the scripts must prevent:
+- A clean CI checkout has no `dist/` → leak spec's false-pass guard would fire (correct), but `pnpm test` would halt before unit tests even run.
+- A stale workspace has an old `dist/` from a previous build → leak spec scans the OLD bundle and passes vacuously, missing a regression introduced after that build.
+
+Both are closed by splitting the test pipeline so the leak spec is gated on a freshly produced `dist/`, and the rest of the unit suite is decoupled from the build:
+
 ```json
 {
   "scripts": {
     "build": "vite build",
-    "test": "pnpm run check:no-local-auth-build && vitest run",
-    "check:no-local-auth-build": "node scripts/check-no-local-auth-build.mjs"
+    "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && vite build",
+    "check:no-local-auth-build": "node scripts/check-no-local-auth-build.mjs",
+    "test:unit": "vitest run --exclude contract-tests/leak.spec.js",
+    "test:leak": "pnpm run build:clean && vitest run contract-tests/leak.spec.js",
+    "test": "pnpm run check:no-local-auth-build && pnpm run test:unit && pnpm run test:leak"
   }
 }
 ```
 
-The check runs in CI alongside the leak test. A contributor who weakens the guard sees the failure before the artifact ships, AND the failure points specifically at the build-mode guard rather than an opaque "build failed" — narrowing diagnosis.
+What each script enforces:
+- `build:clean` removes any prior `dist/` via Node `fs.rmSync(..., {recursive:true, force:true})` (cross-shell; works on cmd.exe / PowerShell / bash) and then runs `vite build`. Always emits a freshly built bundle.
+- `test:unit` runs the unit + contract-drift + frontend Vitest suite, excluding the leak spec. Fast loop; no build dependency.
+- `test:leak` runs `build:clean` first, then runs the leak spec only. Guarantees the bundle the leak spec scans was emitted seconds ago.
+- `test` chains all three: build-mode regression guard → unit suite → fresh-build leak gate. CI gates on this top-level script. None of the gates can be skipped without editing the script directly.
+
+A contributor who weakens any of the three guards sees the failure before the artifact ships, AND the failure points specifically at which gate failed (regression vs unit vs leak) — narrowing diagnosis.
 
 ---
 
