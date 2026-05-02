@@ -35,6 +35,15 @@ const e = p().catch(() => makeDevToken());
 const f = p().catch(() => cachedToken);
 const g = p().catch(() => 'FAKE_JWT');
 const h = p().catch((err) => fallbackTokenFor(err));
+
+// Round-34 closures: async arrow head + multi-line catch.
+const i = p().catch(async () => makeDevToken());
+const j = p().catch(
+  () => fallbackToken,
+);
+const k = p().catch(async (err) =>
+  retryWithDev(err),
+);
 ```
 
 ## Forbidden env-var names

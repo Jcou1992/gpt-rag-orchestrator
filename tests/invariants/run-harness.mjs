@@ -55,12 +55,17 @@ const cases = [
     name: 'stack (servlet imports)',
     script: 'scripts/check-stack-invariant.mjs',
     fixtureDir: resolve(__dirname, 'fixtures/bad-stack'),
-    // 13 entries in check-stack-invariant.mjs FORBIDDEN; fixture covers
-    // all 13 entries via imports + one extra @AutoConfigureMockMvc
-    // usage line (annotation rule fires alongside the import rule), plus
-    // two FQN-without-import lines (HttpSecurity + SecurityFilterChain
-    // FQN usages from the round-33 fixture extension).
-    expectedViolations: 15,
+    // 23 entries in FORBIDDEN (13 FQN + 10 wildcard). Fixture coverage:
+    //  - 11 FQN imports (one per FQN rule that has an import line)
+    //  - 1  @AutoConfigureMockMvc usage line (annotation rule firing
+    //       alongside the import rule)
+    //  - 1  @EnableWebSecurity usage line
+    //  - 2  FQN-without-import lines (round-33: HttpSecurity + SecurityFilterChain)
+    //  - 10 wildcard import lines (round-34); two of them
+    //       (`jakarta.servlet.*`, `javax.servlet.*`) double-match because
+    //       the `\bjakarta\.servlet\b` / `\bjavax\.servlet\b` rules also
+    //       match the prefix.
+    expectedViolations: 27,
     sentinels: [
       'HttpSecurity',
       'SecurityFilterChain',
@@ -82,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 25,                 // 14 substring + 2 regex × occurrences in fixture (incl. 9 catch-substitute lines × 2 rules each = 18; + 5 narrative + 3 env var + ... = 25)
+    expectedViolations: 28,                 // 25 (round-33) + 3 round-34 catch lines (async / multi-line / async-multi)
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',

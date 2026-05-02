@@ -68,3 +68,24 @@ class BadFqnUsage {
     fun configure(http: org.springframework.security.config.annotation.web.builders.HttpSecurity): org.springframework.security.web.SecurityFilterChain = TODO()
 }
 ```
+
+```kotlin
+package com.example.bad
+
+// Wildcard imports — closes the round-34 bypass class. A wildcard at
+// the package level lets a scaffold use `HttpSecurity` / `SecurityFilterChain`
+// / `MockMvc` as simple types without ever emitting the FQN. Each wildcard
+// rule fires on its own.
+import org.springframework.security.config.annotation.web.builders.*
+import org.springframework.security.web.*
+import org.springframework.security.config.annotation.web.configuration.*
+import org.springframework.security.oauth2.jwt.*
+import org.springframework.test.web.servlet.*
+import org.springframework.test.web.servlet.request.*
+import org.springframework.test.web.servlet.result.*
+import org.springframework.boot.test.autoconfigure.web.servlet.*
+import jakarta.servlet.*
+import javax.servlet.*
+
+class BadWildcardConsumer
+```

@@ -70,23 +70,25 @@ const FORBIDDEN_REGEX = [
     label: 'RAG_API_URL',
     why: 'env var must be VITE_RAG_API_URL — Vite exposes only VITE_-prefixed names to the bundle',
   },
-  // Structural catch-and-substitute: any `.catch(... => <body>)` pattern.
-  // Closes the round-33 bypass class — the substring rules above only
-  // matched specific token literals (`'STUB-JWT'` / `'auth-stub-...'`).
-  // A template could re-introduce the v3 leak class with a different
-  // returned value (e.g., `.catch(() => makeDevToken())`,
-  // `.catch(() => cachedToken)`, `.catch(() => 'FAKE_JWT')`) and slip
-  // past the literal-only checks. This rule catches every `.catch(...
-  // => ...)` shape; legitimate uses (e.g., re-throwing) need an explicit
-  // allow-anchor and ALLOWLIST entry.
+  // Structural catch-and-substitute (round-33 / round-34 closures).
   //
-  // The regex anchors on `.catch(`, then optionally consumes one
-  // single-arg arrow head `(...)?` or a bare ident, then `=>`, then
-  // requires at least one non-)/non-whitespace char before the closing
-  // `)`. That body shape rules out `.catch()` alone and `.catch(handler)`
-  // (no arrow), but flags every direct-arrow substitution.
+  // Catches every `.catch(... => <body>)` shape — including:
+  //   - `async` arrow heads:        `.catch(async () => fallback)`
+  //   - multi-line catches:         `.catch(\n  () => fallback\n)`
+  //   - non-literal substitutes:    `.catch(() => makeDevToken())`,
+  //                                  `.catch(() => cachedToken)`
+  //
+  // The `[\s\S]` runs match across newlines and the `multiline: false`
+  // semantics of `^/$` are not needed here. The rule is applied on the
+  // entire file contents (`scanFileMultiline`), not line-by-line, so a
+  // cross-line catch can't slip past.
+  //
+  // Legitimate uses (e.g., re-throwing) need an explicit allow-anchor
+  // (the multi-line scan also resolves anchors against the line of the
+  // `.catch(` head).
   {
-    regex: /\.catch\s*\(\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)?\s*=>\s*[^)\s][^)]*\)/,
+    multiline: true,
+    regex: /\.catch\s*\(\s*(?:async\s+)?(?:\([\s\S]*?\)|[A-Za-z_$][\w$]*)?\s*=>\s*[^)\s][\s\S]*?\)/g,
     label: 'catch-and-substitute',
     why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(... => ...)` substitution silently downgrades the auth boundary',
   },
@@ -201,8 +203,9 @@ function scanFile(file) {
       });
     }
 
-    // Regex rules (word-boundary aware).
+    // Regex rules — line-scoped only (skip multiline rules, handled below).
     for (const rule of FORBIDDEN_REGEX) {
+      if (rule.multiline) continue;
       if (!rule.regex.test(line)) continue;
       if (isAllowed(rule.label)) continue;
       violations.push({
@@ -214,6 +217,43 @@ function scanFile(file) {
       });
     }
   }
+
+  // Multi-line regex rules — applied to the entire file content so that
+  // catch-substitute patterns split across lines (round-34 bypass) are
+  // caught. Line number derived from the match's index.
+  const rel = relative(REPO_ROOT, file);
+  for (const rule of FORBIDDEN_REGEX) {
+    if (!rule.multiline) continue;
+    // Ensure the regex has the `g` flag for repeated `exec`.
+    const re = rule.regex.flags.includes('g')
+      ? rule.regex
+      : new RegExp(rule.regex.source, rule.regex.flags + 'g');
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const lineNumber = text.slice(0, m.index).split('\n').length;
+      // Allowlist resolution: walk backwards from the line of the match
+      // for a STANDALONE anchor (same semantics as the line-scoped path).
+      let allowed = false;
+      for (let k = lineNumber - 2; k >= 0; k--) {
+        const prev = lines[k];
+        if (prev.trim() === '') continue;
+        const trimmed = prev.trim();
+        if (!STANDALONE_ANCHOR_RE.test(trimmed)) break;
+        const am = trimmed.match(ALLOW_ANCHOR_RE);
+        if (am && ALLOWLIST.has(`${am[1]}:${rule.label}`)) { allowed = true; }
+        break;
+      }
+      if (allowed) continue;
+      violations.push({
+        file: rel,
+        line: lineNumber,
+        pattern: rule.label,
+        why: rule.why,
+        excerpt: m[0].replace(/\s+/g, ' ').slice(0, 120),
+      });
+    }
+  }
+
   return violations;
 }
 

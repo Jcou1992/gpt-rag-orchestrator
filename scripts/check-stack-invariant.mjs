@@ -57,6 +57,22 @@ const FORBIDDEN = [
   // Servlet API (matches fully-qualified usage like `jakarta.servlet.http.HttpServletRequest`)
   { regex: /\bjakarta\.servlet\b/,                                                                                 why: 'WebFlux has no servlet API (use Spring WebFlux types)' },
   { regex: /\bjavax\.servlet\b/,                                                                                   why: 'WebFlux has no servlet API (use Spring WebFlux types)' },
+
+  // Wildcard imports of any banned servlet package — closes the round-34
+  // bypass class. `import org.springframework.security.config.annotation.web.builders.*`
+  // would otherwise let a scaffold use `HttpSecurity` as a simple type
+  // without ever emitting the FQN the rules above match. One rule per
+  // forbidden package keeps the violation message specific.
+  { regex: /\borg\.springframework\.security\.config\.annotation\.web\.builders\.\*/,                              why: 'wildcard import of servlet builders package — use ServerHttpSecurity (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.web\.\*/,                                                            why: 'wildcard import of servlet security web package — use SecurityWebFilterChain (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.config\.annotation\.web\.configuration\.\*/,                         why: 'wildcard import of servlet @EnableWebSecurity package — use @EnableWebFluxSecurity (WebFlux)' },
+  { regex: /\borg\.springframework\.security\.oauth2\.jwt\.\*/,                                                    why: 'wildcard import of servlet JwtDecoder package — use ReactiveJwtDecoder (WebFlux)' },
+  { regex: /\borg\.springframework\.test\.web\.servlet\.\*/,                                                       why: 'wildcard import of MockMvc test package — use WebTestClient (WebFlux)' },
+  { regex: /\borg\.springframework\.test\.web\.servlet\.request\.\*/,                                              why: 'wildcard import of MockMvc request DSL — use WebTestClient request DSL' },
+  { regex: /\borg\.springframework\.test\.web\.servlet\.result\.\*/,                                               why: 'wildcard import of MockMvc result DSL — use WebTestClient assertion DSL' },
+  { regex: /\borg\.springframework\.boot\.test\.autoconfigure\.web\.servlet\.\*/,                                  why: 'wildcard import of @AutoConfigureMockMvc package — use @AutoConfigureWebTestClient' },
+  { regex: /\bjakarta\.servlet\.\*/,                                                                                why: 'wildcard import of jakarta.servlet — WebFlux has no servlet API' },
+  { regex: /\bjavax\.servlet\.\*/,                                                                                  why: 'wildcard import of javax.servlet — WebFlux has no servlet API' },
 ];
 
 // Scan helpers
