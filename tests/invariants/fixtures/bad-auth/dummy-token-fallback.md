@@ -50,6 +50,13 @@ const k = p().catch(async (err) =>
 const l = p().catch(function () { return makeDevToken(); });
 const m = p().catch(function (err) { return fallbackTokenFor(err); });
 const n = p().catch(async function () { return makeDevToken(); });
+
+// Round-36 closures: parenthesized + comment-decorated function-expression
+// handlers (the round-35 regex anchored too tightly on the literal
+// `function` keyword being right after the optional `async`).
+const o = p().catch((function () { return makeDevToken(); }));
+const q = p().catch(/* fallback */ function () { return makeDevToken(); });
+const r = p().catch(async /* fallback */ function () { return makeDevToken(); });
 ```
 
 ## Forbidden env-var names

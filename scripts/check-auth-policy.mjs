@@ -92,16 +92,32 @@ const FORBIDDEN_REGEX = [
     label: 'catch-and-substitute',
     why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(... => ...)` substitution silently downgrades the auth boundary',
   },
-  // Round-35 closure: function-expression catch handler.
-  // `.catch(function () { return makeDevToken(); })` and the async +
-  // generator variants slip past the arrow-only regex above. Match any
-  // `.catch(... function ...)` shape regardless of body. Legitimate
-  // re-throw handlers need an explicit allow-anchor.
+  // Round-35 + round-36 closures: function-expression catch handler in
+  // ANY shape — bare, async-prefixed, parenthesized, or with intervening
+  // comments. Match `.catch(<anything-but-paren-or-curly>* function ...)`.
+  //
+  // The `[^){}]*?` segment between `.catch(` and `function` allows:
+  //   - whitespace                    `.catch(  function ...)`
+  //   - `async` keyword               `.catch(async function ...)`
+  //   - block comments                `.catch(/* note */ function ...)`
+  //   - line comments (no newline)    `.catch(// note\n function ...)` *
+  //   - extra parenthesization        `.catch((function ...))`
+  //   - combinations                  `.catch(async /* note */ function ...)`
+  //
+  // (* the [\s\S] in the lazy quantifier crosses newlines, so a `//`
+  // comment that ends with a newline followed by `function` on the next
+  // line still resolves.)
+  //
+  // Excluded by `[^){}]`: `)` (would close the `.catch(`), `{` and `}`
+  // (would suggest we already passed into a function body or another
+  // block — keeps the regex from spanning into unrelated code).
+  //
+  // Legitimate re-throw handlers need an explicit allow-anchor.
   {
     multiline: true,
-    regex: /\.catch\s*\(\s*(?:async\s+)?function\b[\s\S]*?\)\s*\{[\s\S]*?\}/g,
+    regex: /\.catch\s*\(\s*[^){}]*?\bfunction\b[\s\S]*?\)\s*\{[\s\S]*?\}/g,
     label: 'catch-fn-substitute',
-    why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(function ...)` handler is forbidden unless the body re-throws unconditionally (use an explicit allow-anchor)',
+    why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(... function ...)` handler is forbidden (parenthesized, async, commented variants included) unless the body re-throws unconditionally (use an explicit allow-anchor)',
   },
 ];
 
