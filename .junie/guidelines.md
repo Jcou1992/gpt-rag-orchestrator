@@ -12,6 +12,7 @@ This repo integrates the GPT-RAG Orchestrator (Python/FastAPI) into a **Vue 3 + 
 - **TDD for all generated code.** Red → green → refactor. No production code without a failing test first. Tests live alongside implementation (`*.spec.ts` / `*Test.kt`).
 - **Auth tokens passthrough.** The user's Entra ID JWT is forwarded to the orchestrator for OBO. Never cache or log tokens.
 - **No secrets in the repo.** App registrations, API keys, connection strings → environment variables or Key Vault references only.
+- **The SSE events contract lives in `.junie/contracts/sse-events.schema.json`** (with examples in `.junie/contracts/sse-events.examples.json`). Do not restate it in prose — playbook 04 reads the canonical file via a Node copy step, and `scripts/check-r5-invariant.mjs` enforces the no-inline-schema invariant in `.junie/playbooks/**/*.md`. Extend this pattern (one schema file per contract under `.junie/contracts/`) when a second contract is canonicalized — until then, treat this rule as scoped to SSE events only.
 
 ## Guides & Playbooks
 
