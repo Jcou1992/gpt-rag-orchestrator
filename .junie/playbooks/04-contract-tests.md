@@ -4,7 +4,7 @@
 
 **Input:** `SCAFFOLD_DECISIONS.md`, completed `frontend/` + `backend/`, [INTEGRATION_PLAN.md §3](../../INTEGRATION_PLAN.md), the canonical contract files under `.junie/contracts/`.
 
-**Output:** `contract-tests/`, `vite.config.js`, `src/services/{auth,auth-stub}.js`, `msalConfig.js`, `docs/communication-fallbacks.md`, test report, updated `SCAFFOLD_PROGRESS.md`.
+**Output:** `contract-tests/`, `vite.config.js`, `src/services/{auth,auth-stub}.js`, `src/auth/msalConfig.js`, `docs/communication-fallbacks.md`, test report, updated `SCAFFOLD_PROGRESS.md`.
 
 **Single source of truth for SSE events:** the canonical schema and example fixture live under `.junie/contracts/sse-events.schema.json` and `.junie/contracts/sse-events.examples.json`. This playbook never restates either body inline — it copies them into the scaffolded target. Restating either is an R5 violation; `scripts/check-r5-invariant.mjs` enforces this at the parser level.
 
@@ -145,7 +145,7 @@ The fixture validates because Step 1 copied both files from the same canonical p
 
 **Single-gate invariant (read first).** There is exactly one path to activate any dev/test double across the scaffolded backend: `app.dev-doubles.enabled=true`. Do not introduce parallel properties like `orchestrator.mock-enabled`. `DevDoubleGateTest` (playbook 03 Unit 9b Step D) enforces this; a parallel switch creates a second activation path that bypasses the gate and lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied.
 
-**`application-mock.yml`** — single property only:
+**`application-mock.yml`** — single dev-double activation property (the file may carry other unrelated overrides like `orchestrator.url` and `orchestrator.api-key`; the invariant scoped here is "exactly one property activates the dev-double gate", namely `app.dev-doubles.enabled=true`):
 
 ```yaml
 # Activates the dev-double gate established in playbook 03 Unit 9b.

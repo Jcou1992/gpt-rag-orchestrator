@@ -305,18 +305,25 @@ dependencies {
     "highlight.js": "^11.10.0",
     "dompurify": "^3.1.6",
     "@microsoft/fetch-event-source": "^2.0.1",
+    "@azure/msal-browser": "^3.20.0",
     "pinia": "^2.2.0"
   },
   "devDependencies": {
     "vite": "^5.4.0",
     "vite-plugin-vuetify": "^2.0.4",
-    "typescript": "^5.6.0",
-    "vue-tsc": "^2.1.0"
+    "vitest": "^2.0.0",
+    "ajv": "^8.17.0",
+    "ajv-formats": "^3.0.1"
   }
 }
 ```
 
-> **Nota:** `@microsoft/fetch-event-source` es imprescindible — el `EventSource` nativo no soporta headers custom y vas a necesitar `Authorization: Bearer`.
+> **TypeScript variant only** (opt-in en `01-preflight`): añade además `"typescript": "^5.6.0"` y `"vue-tsc": "^2.1.0"` a `devDependencies`. En el default JavaScript no van — los `.spec.js` y los snippets `.js` no los necesitan.
+
+> **Notas:**
+> - `@microsoft/fetch-event-source` es imprescindible — el `EventSource` nativo no soporta headers custom y vas a necesitar `Authorization: Bearer`.
+> - `@azure/msal-browser` lo importa `src/auth/msalConfig.{js,ts}` (R11/SC6 hardened MSAL). Sin él el build se rompe con `Cannot find module '@azure/msal-browser'`.
+> - `vitest` + `ajv` + `ajv-formats` son los runners y validadores que `contract-tests/contract.spec.{js,ts}` y `contract-tests/leak.spec.{js,ts}` requieren (playbook 04 Pasos 2 y 5).
 
 ---
 
