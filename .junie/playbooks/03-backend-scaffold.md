@@ -149,6 +149,8 @@ After each unit:
 
 ### Unit 9b: Profile-gated dev-double + OBO JWT integration tests
 
+**Stack constraint (read first — non-negotiable).** This unit assumes the locked stack: **Kotlin + Spring Boot WebFlux** (not Spring MVC / servlet). Every code template below uses **reactive** Spring Security types (`ServerHttpSecurity`, `SecurityWebFilterChain`, `ReactiveJwtDecoder`, `WebTestClient`). Servlet imports (`HttpSecurity`, `SecurityFilterChain`, `JwtDecoder`, `MockMvc`, `jakarta.servlet.*`) are forbidden and `scripts/check-stack-invariant.mjs` fails the build if any appear in a Kotlin code block in this playbook. If the locked stack ever changes, every snippet here is re-evaluated under the security-correctness dependency noted in `.junie/guidelines.md`.
+
 **Why this unit exists.** Frontend hardening (playbook 04 leak test) is decorative without a matching backend gate plus real token validation on the wire. This unit closes both: (a) every dev/test-double bean is property-gated fail-closed, and (b) `oauth2ResourceServer().jwt()` is wired with JWKS URI, audience, and issuer so unsigned/forged tokens are rejected at the boundary. The two integration tests below — `DevDoubleGateTest` and `OboValidationTest` — fail the build whenever either gate regresses.
 
 **Files:**
@@ -317,11 +319,17 @@ class DevDoubleGateTest {
 
 **Integration check (no regression of dev workflow):** with `app.dev-doubles.enabled=true` set on the runner via `.withPropertyValues("app.dev-doubles.enabled=true")`, dev-double beans DO load — confirm by switching the runner config in a separate test method.
 
-#### Step D — OBO JWT validation in `SecurityConfig` (R6c)
+#### Step D — OBO JWT validation in `SecurityConfig` (R6c) — **WebFlux reactive**
 
-Spring Security `oauth2ResourceServer().jwt()` is configured against the Entra ID JWKS URI with required `aud` and expected `iss`. Properties have **no defaults** — a missing property fails the app at startup, not at first request. This prevents silent acceptance of unsigned tokens.
+Spring Security reactive `oauth2ResourceServer().jwt()` is configured against the Entra ID JWKS URI with required `aud` and expected `iss`. Properties have **no defaults** — a missing property fails the app at startup, not at first request. This prevents silent acceptance of unsigned tokens.
 
-**CSRF posture decision (same step):** scaffold `http.csrf(AbstractHttpConfigurer::disable)` for stateless JWT-authenticated endpoints. Safety rationale: CSRF defends against cookie-based credential injection (browsers auto-attach cookies to cross-origin requests). Bearer headers cannot be auto-injected cross-origin — the attacker cannot read the token from another origin (CORS) and cannot make the browser attach it (no equivalent of the `SameSite` cookie behavior for `Authorization`). For a stateless JWT API with no cookie auth, CSRF protection is theatre and breaks legitimate clients that don't fetch a CSRF token.
+**Reactive types (do NOT use the servlet variants):**
+- `ServerHttpSecurity` (not `HttpSecurity`)
+- `SecurityWebFilterChain` (not `SecurityFilterChain`)
+- `ReactiveJwtDecoder` (not `JwtDecoder`)
+- `NimbusReactiveJwtDecoder` (not `NimbusJwtDecoder`)
+
+**CSRF posture decision (same step):** disable CSRF for stateless JWT-authenticated endpoints via `http.csrf { it.disable() }` on `ServerHttpSecurity`. Safety rationale: CSRF defends against cookie-based credential injection (browsers auto-attach cookies to cross-origin requests). Bearer headers cannot be auto-injected cross-origin — the attacker cannot read the token from another origin (CORS) and cannot make the browser attach it (no equivalent of `SameSite` for `Authorization`). For a stateless JWT API with no cookie auth, CSRF protection is theatre and breaks legitimate clients that don't fetch a CSRF token.
 
 ```kotlin
 // src/main/kotlin/com/example/config/SecurityConfig.kt
@@ -330,18 +338,19 @@ package com.example.config
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.security.config.annotation.web.builders.HttpSecurity
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer
-import org.springframework.security.oauth2.jwt.JwtDecoder
-import org.springframework.security.oauth2.jwt.JwtValidators
-import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
-import org.springframework.security.oauth2.jwt.JwtClaimValidator
-import org.springframework.security.oauth2.core.OAuth2TokenValidator
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
+import org.springframework.security.config.web.server.ServerHttpSecurity
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
+import org.springframework.security.oauth2.core.OAuth2TokenValidator
 import org.springframework.security.oauth2.jwt.Jwt
-import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.oauth2.jwt.JwtClaimValidator
+import org.springframework.security.oauth2.jwt.JwtValidators
+import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
+import org.springframework.security.web.server.SecurityWebFilterChain
 
 @Configuration
+@EnableWebFluxSecurity
 class SecurityConfig(
     @Value("\${app.entra.jwks-uri}") private val jwksUri: String,         // no default — missing → boot fails
     @Value("\${app.entra.audience}") private val expectedAudience: String, // required `aud` claim
@@ -349,25 +358,25 @@ class SecurityConfig(
 ) {
 
     @Bean
-    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
-        http
+    fun securityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain {
+        return http
             // CSRF: disabled for stateless JWT endpoints. Bearer headers cannot be cross-origin-injected
             // by a browser (CORS prevents read; no auto-attach behavior for Authorization). CSRF only
             // matters for cookie-based credentials. See Unit 9b CSRF posture decision.
             .csrf { it.disable() }
-            .authorizeHttpRequests { auth ->
-                auth.anyRequest().authenticated()
+            .authorizeExchange { exchanges ->
+                exchanges.anyExchange().authenticated()
             }
             .oauth2ResourceServer { oauth2 ->
-                oauth2.jwt { jwt -> jwt.decoder(jwtDecoder()) }
+                oauth2.jwt { jwt -> jwt.jwtDecoder(reactiveJwtDecoder()) }
             }
-        return http.build()
+            .build()
     }
 
     @Bean
-    fun jwtDecoder(): JwtDecoder {
-        // JWKS-backed signature verification — keys fetched from Entra at the JWKS URI.
-        val decoder = NimbusJwtDecoder.withJwkSetUri(jwksUri).build()
+    fun reactiveJwtDecoder(): ReactiveJwtDecoder {
+        // JWKS-backed signature verification — keys fetched from Entra at the JWKS URI (reactive).
+        val decoder = NimbusReactiveJwtDecoder.withJwkSetUri(jwksUri).build()
 
         // Validate iss claim
         val issValidator = JwtValidators.createDefaultWithIssuer(expectedIssuer)
@@ -385,78 +394,212 @@ class SecurityConfig(
 }
 ```
 
-#### Step E — `OboValidationTest` (R7c): real wire-level rejection
+#### Step E — `JwtTestKit` (test util) + `OboValidationTest` (R7c): real wire-level rejection
 
-This is a Spring integration test (`@SpringBootTest` with `@AutoConfigureMockMvc` is the recommended option below). It MUST cover all six cases — if any returns 200 when it should be 401, the build fails.
+This step is split into two artifacts: a deterministic JWT/JWKS fixture builder (`JwtTestKit.kt`) and the actual integration test (`OboValidationTest.kt`). Together they cover all six cases — if any returns 200 when it should be 401, the build fails.
 
-**Two options for valid-token generation (recommended option called out):**
+**Required test dependencies (add to `build.gradle.kts`):**
 
-1. **(RECOMMENDED) Stubbed JWK set served by WireMock + locally-signed JWT.** The test starts a WireMock server, points `app.entra.jwks-uri` at it, and the WireMock stub returns a JWK set whose private key is held by the test. The test signs JWTs locally with that key. Pros: zero CI dependency on a live tenant; deterministic; fast. Cons: writes the most code.
-2. **Real Entra ID test tenant.** The test fetches a real token from a dedicated test tenant during CI. Pros: validates against the real Entra contract. Cons: CI-credential cost (managing tenant creds, rate limits, network flakiness in CI). Not recommended unless contract drift against a real tenant is a primary risk.
+```kotlin
+testImplementation("org.springframework.boot:spring-boot-starter-test")
+testImplementation("io.projectreactor:reactor-test")
+testImplementation("com.nimbusds:nimbus-jose-jwt:9.40")              // RSA keypair + JWS signing
+testImplementation("com.github.tomakehurst:wiremock-jre8:2.35.0")    // JWKS stub server
+testImplementation("org.springframework.boot:spring-boot-starter-webflux")
+testImplementation("org.springframework.security:spring-security-test")
+```
 
-The example below uses option 1 (WireMock + locally-signed JWT) implicitly — production tests should wire WireMock setup in `@BeforeAll`.
+**Token-generation choice (recommended option called out):**
 
-**Note on test framework choice:** WebTestClient (reactive) is an equivalent alternative to `MockMvc` if the scaffolded backend is fully reactive (WebFlux). Both options are documented; pick to match the controller stack from earlier units.
+1. **(RECOMMENDED) Stubbed JWK set served by WireMock + locally-signed JWT.** Test boots a WireMock server, points `app.entra.jwks-uri` at it, and WireMock returns a JWK set whose private key is held by the test. Test signs JWTs locally with that key. Pros: zero CI dependency on a live tenant; deterministic; fast. Cons: writes the most code (`JwtTestKit` below absorbs that cost once).
+2. **Real Entra ID test tenant.** Fetches a real token from a dedicated test tenant during CI. Pros: validates against the real Entra contract. Cons: CI-credential cost (tenant creds, rate limits, network flakiness). Not recommended unless real-tenant drift is a primary risk.
+
+The code below uses option 1.
+
+##### `JwtTestKit.kt` — deterministic RSA + JWKS fixture builder
+
+```kotlin
+// src/test/kotlin/com/example/security/JwtTestKit.kt
+package com.example.security
+
+import com.github.tomakehurst.wiremock.WireMockServer
+import com.github.tomakehurst.wiremock.client.WireMock.aResponse
+import com.github.tomakehurst.wiremock.client.WireMock.get
+import com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching
+import com.nimbusds.jose.JWSAlgorithm
+import com.nimbusds.jose.JWSHeader
+import com.nimbusds.jose.crypto.RSASSASigner
+import com.nimbusds.jose.jwk.JWKSet
+import com.nimbusds.jose.jwk.RSAKey
+import com.nimbusds.jose.jwk.gen.RSAKeyGenerator
+import com.nimbusds.jwt.JWTClaimsSet
+import com.nimbusds.jwt.SignedJWT
+import java.time.Instant
+import java.util.Date
+import java.util.UUID
+
+/**
+ * Deterministic JWT + JWKS test fixtures. Two RSA keypairs:
+ *   - `legitimate` is published in the WireMock JWKS endpoint
+ *   - `attacker`   is NEVER published; signing with it produces a forged token
+ *
+ * All builders return real, structurally-valid, signed JWT strings — no TODOs.
+ */
+object JwtTestKit {
+
+    val legitimate: RSAKey = RSAKeyGenerator(2048).keyID("legit-key-1").generate()
+    val attacker: RSAKey   = RSAKeyGenerator(2048).keyID("attacker-key-1").generate()
+
+    /** Public-only JWK set (what WireMock serves). The attacker key is excluded by design. */
+    fun publishedJwkSet(): JWKSet = JWKSet(legitimate.toPublicJWK())
+
+    /** Wire WireMock to serve `publishedJwkSet()` at the given path. */
+    fun stubJwks(server: WireMockServer, path: String = "/.well-known/jwks.json") {
+        server.stubFor(
+            get(urlPathMatching(path)).willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(publishedJwkSet().toString())
+            )
+        )
+    }
+
+    /** Sign a JWT with the legitimate key and the given claims. */
+    fun sign(
+        signer: RSAKey = legitimate,
+        audience: String,
+        issuer: String,
+        subject: String = "test-user",
+        expiresIn: java.time.Duration = java.time.Duration.ofMinutes(5),
+    ): String {
+        val claims = JWTClaimsSet.Builder()
+            .subject(subject)
+            .audience(audience)
+            .issuer(issuer)
+            .jwtID(UUID.randomUUID().toString())
+            .issueTime(Date.from(Instant.now()))
+            .expirationTime(Date.from(Instant.now().plus(expiresIn)))
+            .build()
+        val header = JWSHeader.Builder(JWSAlgorithm.RS256).keyID(signer.keyID).build()
+        return SignedJWT(header, claims).apply { sign(RSASSASigner(signer.toRSAPrivateKey())) }.serialize()
+    }
+
+    fun validJwt(audience: String, issuer: String): String =
+        sign(audience = audience, issuer = issuer)
+
+    fun forgedJwt(audience: String, issuer: String): String =
+        // Same shape, but signed by the attacker key — JWKS lookup will not find a matching kid/key.
+        sign(signer = attacker, audience = audience, issuer = issuer)
+
+    fun wrongAudienceJwt(expectedAudience: String, issuer: String): String =
+        sign(audience = "$expectedAudience.WRONG", issuer = issuer)
+
+    fun wrongIssuerJwt(audience: String, expectedIssuer: String): String =
+        sign(audience = audience, issuer = "$expectedIssuer/WRONG")
+
+    /** A syntactically broken token (not even three base64 segments). */
+    const val MALFORMED: String = "this.is.not-a-jwt"
+}
+```
+
+##### `OboValidationTest.kt` — WebFlux + WebTestClient
 
 ```kotlin
 // src/test/kotlin/com/example/security/OboValidationTest.kt
 package com.example.security
 
+import com.github.tomakehurst.wiremock.WireMockServer
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.test.web.servlet.MockMvc
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
+import org.springframework.test.web.reactive.server.WebTestClient
 
-@SpringBootTest
-@AutoConfigureMockMvc
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class OboValidationTest {
 
-    @Autowired private lateinit var mvc: MockMvc
+    @Autowired private lateinit var webClient: WebTestClient
 
-    // Implementations build these via WireMock'd JWKS + a locally-held signing key.
-    // (Stub JWK set is the recommended approach — see Step E narrative.)
-    private val malformedJwt: String = "this.is.not-a-jwt"
-    private val forgedJwt: String = TODO("structurally-valid JWT signed by a key NOT in the JWKS")
-    private val wrongAudienceJwt: String = TODO("JWT signed by JWKS key, but aud != app.entra.audience")
-    private val wrongIssuerJwt: String = TODO("JWT signed by JWKS key, but iss != app.entra.issuer")
-    private val validJwt: String = TODO("JWT signed by JWKS key, aud + iss match")
+    companion object {
+        private const val AUDIENCE = "api://gpt-rag-orchestrator-test"
+        private const val ISSUER   = "https://login.test.example/v2.0"
+
+        private val wireMock: WireMockServer = WireMockServer(wireMockConfig().dynamicPort())
+
+        @BeforeAll
+        @JvmStatic
+        fun startWireMock() {
+            wireMock.start()
+            JwtTestKit.stubJwks(wireMock)
+        }
+
+        @AfterAll
+        @JvmStatic
+        fun stopWireMock() {
+            wireMock.stop()
+        }
+
+        /** Bind Spring properties at runtime so SecurityConfig points at WireMock + the test claims. */
+        @JvmStatic
+        @DynamicPropertySource
+        fun properties(registry: DynamicPropertyRegistry) {
+            registry.add("app.entra.jwks-uri") { "${wireMock.baseUrl()}/.well-known/jwks.json" }
+            registry.add("app.entra.audience") { AUDIENCE }
+            registry.add("app.entra.issuer")   { ISSUER }
+        }
+    }
 
     @Test fun `no Authorization header returns 401`() {
-        mvc.perform(get("/api/rag/ask")).andExpect(status().isUnauthorized)
+        webClient.get().uri("/api/rag/ask").exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `malformed JWT returns 401`() {
-        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $malformedJwt"))
-            .andExpect(status().isUnauthorized)
+        webClient.get().uri("/api/rag/ask")
+            .header("Authorization", "Bearer ${JwtTestKit.MALFORMED}")
+            .exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `forged JWT signed by wrong key returns 401`() {
-        // Structurally valid; signature verification against JWKS fails.
-        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $forgedJwt"))
-            .andExpect(status().isUnauthorized)
+        // Structurally valid; signature verification against JWKS fails because the attacker
+        // key is never published in publishedJwkSet().
+        val token = JwtTestKit.forgedJwt(audience = AUDIENCE, issuer = ISSUER)
+        webClient.get().uri("/api/rag/ask")
+            .header("Authorization", "Bearer $token")
+            .exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `JWT with wrong aud claim returns 401`() {
-        // aud claim does not match app.entra.audience.
-        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $wrongAudienceJwt"))
-            .andExpect(status().isUnauthorized)
+        val token = JwtTestKit.wrongAudienceJwt(expectedAudience = AUDIENCE, issuer = ISSUER)
+        webClient.get().uri("/api/rag/ask")
+            .header("Authorization", "Bearer $token")
+            .exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `JWT with wrong iss claim returns 401`() {
-        // iss claim does not match app.entra.issuer.
-        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $wrongIssuerJwt"))
-            .andExpect(status().isUnauthorized)
+        val token = JwtTestKit.wrongIssuerJwt(audience = AUDIENCE, expectedIssuer = ISSUER)
+        webClient.get().uri("/api/rag/ask")
+            .header("Authorization", "Bearer $token")
+            .exchange().expectStatus().isUnauthorized
     }
 
     @Test fun `valid JWT returns 200`() {
-        mvc.perform(get("/api/rag/ask").header("Authorization", "Bearer $validJwt"))
-            .andExpect(status().isOk)
+        val token = JwtTestKit.validJwt(audience = AUDIENCE, issuer = ISSUER)
+        webClient.get().uri("/api/rag/ask")
+            .header("Authorization", "Bearer $token")
+            .exchange().expectStatus().isOk
     }
 }
 ```
+
+**No `TODO(...)` placeholders.** Every fixture is built deterministically from `JwtTestKit`. The forged path is signed by an in-memory keypair that is never published in the JWKS endpoint — `NimbusReactiveJwtDecoder` cannot resolve a matching `kid`/key and rejects the token, exactly as production would reject an attacker-signed JWT.
 
 #### Step F — Commit pattern
 

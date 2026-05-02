@@ -128,42 +128,60 @@ The fixture validates because Step 1 copied both files from the same canonical p
 
 ---
 
-## Step 3 — Mock orchestrator for offline dev
+## Step 3 — Mock orchestrator for offline dev (single dev-double gate)
 
-Many developers may not have the RAG orchestrator running locally. Generate a **fallback mock**:
+Many developers may not have the RAG orchestrator running locally. Generate a **fallback mock** — but it MUST go through the same `@DevOnlyBean` / `app.dev-doubles.enabled` gate defined in playbook 03 Unit 9b. There is exactly one path to activate any dev/test double across the scaffolded backend; do not introduce a parallel property like `orchestrator.mock-enabled`.
 
-**`backend/src/main/kotlin/.../mock/MockOrchestratorClient.kt`:**
+**Why one gate.** A second activation property creates a second way to ship fake responses to production. `DevDoubleGateTest` (playbook 03 Unit 9b) is built around the assumption that `app.dev-doubles.enabled` is the only switch — adding `orchestrator.mock-enabled` lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied. Do not regress this invariant.
+
+**`backend/src/main/kotlin/com/example/dev/MockOrchestratorClient.kt`:**
+
 ```kotlin
+package com.example.dev
+
+import com.example.config.annotations.DevOnlyBean   // composes app.dev-doubles.enabled gate
+import org.springframework.stereotype.Component
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+@DevOnlyBean   // load-bearing: gate cascades from this meta-annotation. NO standalone property.
 @Component
-@ConditionalOnProperty(
-  name = "orchestrator.mock-enabled",
-  havingValue = "true"
-)
 class MockOrchestratorClient(
-  val properties: OrchestratorProperties
+    val properties: OrchestratorProperties
 ) : OrchestratorClient {
 
-  override fun askOrchestrator(
-    ask: String,
-    conversationId: String,
-    userContext: UserContext
-  ): Flow<AskChunk> = flow {
-    // Simulate streaming response
-    emit(AskChunk.Chunk("This is a mocked response to: \"$ask\""))
-    delay(100)
-    emit(AskChunk.Citation("Sample Doc", "https://example.com/doc"))
-    emit(AskChunk.Done())
-  }
+    override fun askOrchestrator(
+        ask: String,
+        conversationId: String,
+        userContext: UserContext
+    ): Flow<AskChunk> = flow {
+        emit(AskChunk.Chunk("This is a mocked response to: \"$ask\""))
+        delay(100)
+        emit(AskChunk.Citation("Sample Doc", "https://example.com/doc"))
+        emit(AskChunk.Done())
+    }
 }
 ```
 
-**`application-mock.yml`:**
+**`application-mock.yml`** — single property only:
+
 ```yaml
+# Activates the dev-double gate from playbook 03 Unit 9b.
+# This is the ONLY property that activates dev doubles. Do not add orchestrator.mock-enabled
+# or any other parallel switch — DevDoubleGateTest enforces the single-gate invariant.
+app:
+  dev-doubles:
+    enabled: true
+
 orchestrator:
-  mock-enabled: true
-  url: http://localhost:8080  # ignored when mock is enabled
-  api-key: mock-key
+  url: http://localhost:8080  # ignored when MockOrchestratorClient is registered
+  api-key: ${ORCHESTRATOR_API_KEY:mock-key}
 ```
+
+`DevDoubleGateTest` (playbook 03 Unit 9b Step C) MUST include `MockOrchestratorClient` in its scope:
+- Without `app.dev-doubles.enabled=true`: bean must NOT register (annotation check fails the build if it does).
+- The `MockOrchestrator*` simple class name also matches the regex `(?i)^(Mock|...)`, so the regex check provides defense-in-depth even if a future contributor forgets `@DevOnlyBean`.
 
 Print:
 ```
@@ -540,8 +558,8 @@ Generate **`docs/communication-fallbacks.md`**:
 - Tests should mock `fetch` to avoid real network calls.
 
 **Backend side:**
-- Use `MockOrchestratorClient` by running with `--spring.profiles.active=mock`.
-- Alternatively, set `orchestrator.mock-enabled=true` in `application.yml`.
+- Use `MockOrchestratorClient` by running with `--spring.profiles.active=mock` (loads `application-mock.yml`, which sets `app.dev-doubles.enabled=true`).
+- The single gate is `app.dev-doubles.enabled=true` — do NOT introduce `orchestrator.mock-enabled` or any other parallel property. `DevDoubleGateTest` enforces this invariant.
 
 **To test locally (frontend + backend, no orchestrator):**
 
