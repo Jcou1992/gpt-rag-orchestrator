@@ -165,6 +165,7 @@ After each unit:
 - `src/test/kotlin/com/example/rag/security/JwtTestKit.kt` (deterministic JWT/JWKS fixture builder)
 - `src/test/kotlin/com/example/rag/security/OboValidationTest.kt` (WebFlux + WebTestClient + WireMock)
 - `src/test/kotlin/com/example/rag/security/SecurityBeansPresentTest.kt` (boots the real `RagApplication` and asserts `SecurityWebFilterChain` + `ReactiveJwtDecoder` beans are registered — catches scan-root drift if anyone moves config outside `com.example.rag`)
+- `src/main/kotlin/com/example/rag/web/dto/UserContext.kt` (request-context DTO carried on the OBO leg — generated here to keep `MockOrchestratorClient.kt` and the `OrchestratorClient` interface compiling without retroactively editing earlier units)
 - `src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt` (the one dev double — referenced by `DevDoubleGateTest` and `OboValidationTest`; generated in this phase because both tests need it on the classpath when phase 03 runs)
 
 #### Step A — Define the `@DevOnlyBean` meta-annotation (load-bearing primary control)
@@ -249,11 +250,41 @@ app:
 
 Production sets `app.dev-doubles.enabled=false` explicitly. Test context leaves it unset (treated as `false` because `matchIfMissing = false`). Only the `dev` profile flips it to `true`.
 
-#### Step C — Generate `MockOrchestratorClient.kt` (must land BEFORE the gate tests below)
+#### Step C — Generate `UserContext.kt` DTO + `MockOrchestratorClient.kt` (must land BEFORE the gate tests below)
 
 `DevDoubleGateTest` (Step D) lists `MockOrchestratorClient::class.java` in `withUserConfiguration(...)`, and `OboValidationTest` (Step F) sets `app.dev-doubles.enabled=true` so this mock is registered when a valid JWT is exercised. Both tests are generated in this unit, in this phase. The mock class therefore MUST be generated in this step — BEFORE the tests reference it. Generating it later (e.g., in `04-contract-tests`) creates a compile-time ordering bug: phase-03 tests would reference a phase-04 class that does not yet exist on the classpath.
 
+`MockOrchestratorClient` depends on a `UserContext` DTO (it is a parameter of `OrchestratorClient.askOrchestrator`). The package tree (line 58) lists `UserContextBuilder.kt` (a service that maps JWT claims → context) but no `UserContext.kt` (the DTO itself). Earlier units assume the DTO exists; this step generates it explicitly so the mock compiles. **Both files land in this step.**
+
 The mock implements the `OrchestratorClient` interface defined in earlier units of this playbook. **Every cross-package type used in the mock is imported explicitly** — bare names would silently fail to resolve in a different package and produce a non-compiling scaffold. The import paths below match the package tree at the top of this playbook (`web/dto` for DTOs, `service` for service interfaces, `config` for configuration types).
+
+##### `UserContext.kt` — request-context DTO
+
+```kotlin
+// src/main/kotlin/com/example/rag/web/dto/UserContext.kt
+package com.example.rag.web.dto
+
+/**
+ * User-scoped context attached to a /api/rag/ask request.
+ * Built from Entra ID JWT claims by UserContextBuilder (Unit 3 service).
+ * Forwarded to the orchestrator on the OBO leg (per INTEGRATION_PLAN.md §3.1).
+ *
+ * NOTE: this DTO would ideally live in Unit 1's DTO bundle alongside AskRequest
+ * and AskChunk. We generate it here in Unit 9b Step C because Unit 1's package
+ * tree omitted it; ensures MockOrchestratorClient compiles without modifying
+ * earlier units retroactively.
+ */
+data class UserContext(
+    /** Entra ID object id (oid claim). Stable, opaque. */
+    val oid: String,
+    /** Preferred username (preferred_username / upn claim). May be null in some token types. */
+    val preferredUsername: String? = null,
+    /** Free-form attribute bag — e.g., {"department": "ventas"} per INTEGRATION_PLAN §3.1. */
+    val attributes: Map<String, String> = emptyMap(),
+)
+```
+
+##### `MockOrchestratorClient.kt` — the dev double the gate tests reference
 
 ```kotlin
 // src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt
@@ -322,11 +353,12 @@ The dev-double gate has two enforcement layers, each implemented as a separate J
 package com.example.rag.config
 
 import com.example.rag.config.annotations.DevOnlyBean
-// REQUIRED: enumerate every @Configuration class in this project that defines dev-double beans.
-// If this project also has @Component-scanned dev doubles (e.g., MockOrchestratorClient),
-// import and pass them via .withUserConfiguration(...) too. Missing imports = vacuous pass.
-import com.example.rag.dev.DevDoublesConfig                  // contains @DevOnlyBean @Bean methods
-import com.example.rag.dev.MockOrchestratorClient            // @DevOnlyBean @Component (playbook 04 Step 3)
+// REQUIRED: enumerate every dev-double class generated in this unit. Right now Step C
+// only generates MockOrchestratorClient. If you later add @Bean-method dev doubles inside
+// a @Configuration class (e.g., DevDoublesConfig with @DevOnlyBean @Bean methods), add
+// that class to .withUserConfiguration(...) — missing entries cause vacuous-pass failures
+// the classpath-scan test (DevDoubleClasspathScanTest) is designed to catch.
+import com.example.rag.dev.MockOrchestratorClient            // @DevOnlyBean @Component (Step C above)
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -344,10 +376,10 @@ class DevDoubleGateTest {
      */
     private val contextRunner: ApplicationContextRunner = ApplicationContextRunner()
         .withUserConfiguration(
-            DevDoublesConfig::class.java,
             MockOrchestratorClient::class.java,
             // ADD MORE: every @Configuration / @Component class that defines or imports
-            // a dev/test double belongs in this list.
+            // a dev/test double belongs in this list. The classpath-scan test
+            // (DevDoubleClasspathScanTest) is the safety net if entries are forgotten.
         )
         // NOTE: app.dev-doubles.enabled is intentionally NOT set here.
         // matchIfMissing = false on the meta-annotation makes the absence fail-closed.
@@ -630,7 +662,7 @@ class SecurityBeansPresentTest {
 **Failure modes the two tests catch together:**
 - Source has `@Component class MockFooClient` without `@DevOnlyBean` → classpath-scan fires (independent of any test slice).
 - Source has `@DevOnlyBean class FakeAuthClient` but the property gate misfires → Spring slice annotation check fires.
-- Source has `@DevOnlyBean class MockOrchestratorClient` correctly gated, but `DevDoubleGateTest` slice forgot to include `DevDoublesConfig` → classpath-scan still validates the marker is present, so the test does not pass vacuously even when the slice is incomplete.
+- Source has `@DevOnlyBean class MockOrchestratorClient` correctly gated, but `DevDoubleGateTest` slice forgot to include some other dev-double config (e.g., a future `DevDoublesConfig` carrying `@DevOnlyBean @Bean` methods) → classpath-scan still validates the marker is present on every dev-double class, so the test does not pass vacuously even when the slice is incomplete.
 - Class named `MockingjayController` in source → classpath-scan fires unless allow-listed with justification.
 
 #### Step E — OBO JWT validation in `SecurityConfig` (R6c) — **WebFlux reactive**
@@ -947,7 +979,7 @@ Per existing TDD discipline. **Order matches the step order above.** Steps A–B
 
 1. `feat(rag-be): @DevOnlyBean meta-annotation` *(Step A)*
 2. `feat(rag-be): app.dev-doubles.enabled + app.entra.* properties` *(Step B)*
-3. `feat(rag-be): MockOrchestratorClient (gated by @DevOnlyBean)` *(Step C — MUST land before Steps D/F tests reference it)*
+3. `feat(rag-be): UserContext DTO + MockOrchestratorClient (gated by @DevOnlyBean)` *(Step C — MUST land before Steps D/F tests reference them)*
 4. `test(rag-be): DevDoubleClasspathScanTest red` *(Step D)*
 5. `test(rag-be): DevDoubleClasspathScanTest green` *(Step D)*
 6. `test(rag-be): DevDoubleGateTest (Spring slice) red` *(Step D)*
