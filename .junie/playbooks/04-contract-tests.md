@@ -134,12 +134,12 @@ Many developers may not have the RAG orchestrator running locally. Generate a **
 
 **Why one gate.** A second activation property creates a second way to ship fake responses to production. `DevDoubleGateTest` (playbook 03 Unit 9b) is built around the assumption that `app.dev-doubles.enabled` is the only switch — adding `orchestrator.mock-enabled` lets a misconfigured prod profile route real users to canned SSE responses while the central gate appears satisfied. Do not regress this invariant.
 
-**`backend/src/main/kotlin/com/example/dev/MockOrchestratorClient.kt`:**
+**`backend/src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt`:**
 
 ```kotlin
-package com.example.dev
+package com.example.rag.dev
 
-import com.example.config.annotations.DevOnlyBean   // composes app.dev-doubles.enabled gate
+import com.example.rag.config.annotations.DevOnlyBean   // composes app.dev-doubles.enabled gate
 import org.springframework.stereotype.Component
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow

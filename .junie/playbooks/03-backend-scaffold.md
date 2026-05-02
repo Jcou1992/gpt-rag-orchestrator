@@ -151,17 +151,20 @@ After each unit:
 
 **Stack constraint (read first — non-negotiable).** This unit assumes the locked stack: **Kotlin + Spring Boot WebFlux** (not Spring MVC / servlet). Every code template below uses **reactive** Spring Security types (`ServerHttpSecurity`, `SecurityWebFilterChain`, `ReactiveJwtDecoder`, `WebTestClient`). Servlet imports (`HttpSecurity`, `SecurityFilterChain`, `JwtDecoder`, `MockMvc`, `jakarta.servlet.*`) are forbidden and `scripts/check-stack-invariant.mjs` fails the build if any appear in a Kotlin code block in this playbook. If the locked stack ever changes, every snippet here is re-evaluated under the security-correctness dependency noted in `.junie/guidelines.md`.
 
+**Package-root invariant (read first — non-negotiable).** The `@SpringBootApplication` class is `com.example.rag.RagApplication`, so Spring Boot's default component scan starts at `com.example.rag`. Every backend production class in this unit MUST live under `com.example.rag.*` (`com.example.rag.config`, `com.example.rag.dev`, `com.example.rag.security`). Putting a class under `com.example.config` (or any sibling of `com.example.rag`) silently excludes it from the runtime context — the slice tests would still pass against their explicit `withUserConfiguration(...)`, but the deployed app's `SecurityWebFilterChain` and `ReactiveJwtDecoder` beans would be absent and the auth boundary would collapse. `SecurityBeansPresentTest` (Step C) catches this regression at boot time. Test-tree fixtures (e.g., `MockSyntheticDouble` for `DevDoubleClasspathScanTest`) MUST live OUTSIDE `com.example.rag.*` (use `com.fixtures.*`) so the production gate test cannot discover them.
+
 **Why this unit exists.** Frontend hardening (playbook 04 leak test) is decorative without a matching backend gate plus real token validation on the wire. This unit closes both: (a) every dev/test-double bean is property-gated fail-closed, and (b) `oauth2ResourceServer().jwt()` is wired with JWKS URI, audience, and issuer so unsigned/forged tokens are rejected at the boundary. The two integration tests below — `DevDoubleGateTest` and `OboValidationTest` — fail the build whenever either gate regresses.
 
 **Files:**
-- `src/main/kotlin/com/example/config/annotations/DevOnlyBean.kt`
-- `src/main/kotlin/com/example/config/SecurityConfig.kt` (extend Unit 6 output — WebFlux reactive)
+- `src/main/kotlin/com/example/rag/config/annotations/DevOnlyBean.kt`
+- `src/main/kotlin/com/example/rag/config/SecurityConfig.kt` (extend Unit 6 output — WebFlux reactive)
 - `src/main/resources/application.yml` (add `app.dev-doubles.enabled` + `app.entra.*` properties)
-- `src/test/kotlin/com/example/config/DevDoubleGateTest.kt` (Spring slice — gating-misfire layer)
-- `src/test/kotlin/com/example/config/DevDoubleClasspathScanTest.kt` (static classpath scan — load-bearing layer)
-- `src/test/kotlin/com/example/_devdoublescantestfixtures/MockSyntheticDouble.kt` (test-only fixture proving the scanner pipeline finds dev-double-named classes — regression guard for iteration-2 anchor bug)
-- `src/test/kotlin/com/example/security/JwtTestKit.kt` (deterministic JWT/JWKS fixture builder)
-- `src/test/kotlin/com/example/security/OboValidationTest.kt` (WebFlux + WebTestClient + WireMock)
+- `src/test/kotlin/com/example/rag/config/DevDoubleGateTest.kt` (Spring slice — gating-misfire layer)
+- `src/test/kotlin/com/example/rag/config/DevDoubleClasspathScanTest.kt` (static classpath scan — load-bearing layer)
+- `src/test/kotlin/com/fixtures/devdoublescan/MockSyntheticDouble.kt` (test-only fixture proving the scanner pipeline finds dev-double-named classes — regression guard for iteration-2 anchor bug; lives **outside** `com.example.rag` so the production gate test cannot see it)
+- `src/test/kotlin/com/example/rag/security/JwtTestKit.kt` (deterministic JWT/JWKS fixture builder)
+- `src/test/kotlin/com/example/rag/security/OboValidationTest.kt` (WebFlux + WebTestClient + WireMock)
+- `src/test/kotlin/com/example/rag/security/SecurityBeansPresentTest.kt` (boots the real `RagApplication` and asserts `SecurityWebFilterChain` + `ReactiveJwtDecoder` beans are registered — catches scan-root drift if anyone moves config outside `com.example.rag`)
 
 #### Step A — Define the `@DevOnlyBean` meta-annotation (load-bearing primary control)
 
@@ -172,8 +175,8 @@ This cascading behavior is why we need a meta-annotation rather than a plain mar
 **Convention:** every dev/test-double bean class OR `@Bean` method MUST carry `@DevOnlyBean`. The bean-name regex check in `DevDoubleGateTest` (Step C) is defense-in-depth for the case where someone forgets the marker.
 
 ```kotlin
-// src/main/kotlin/com/example/config/annotations/DevOnlyBean.kt
-package com.example.config.annotations
+// src/main/kotlin/com/example/rag/config/annotations/DevOnlyBean.kt
+package com.example.rag.config.annotations
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import java.lang.annotation.ElementType
@@ -207,7 +210,7 @@ annotation class DevOnlyBean
 **Usage at the bean site (class-level):**
 
 ```kotlin
-// e.g., src/main/kotlin/com/example/dev/MockOrchestratorClient.kt
+// e.g., src/main/kotlin/com/example/rag/dev/MockOrchestratorClient.kt
 @DevOnlyBean
 @Component
 class MockOrchestratorClient : OrchestratorClient { /* ... */ }
@@ -265,15 +268,15 @@ The dev-double gate has two enforcement layers, each implemented as a separate J
 `withUserConfiguration` MUST list every `@Configuration` class that defines or imports dev/test-double beans. The placeholder shown below MUST be replaced by the scaffolded project's actual config class list — the playbook treats this as a required step, NOT optional. Failure to enumerate is failure to test.
 
 ```kotlin
-// src/test/kotlin/com/example/config/DevDoubleGateTest.kt
-package com.example.config
+// src/test/kotlin/com/example/rag/config/DevDoubleGateTest.kt
+package com.example.rag.config
 
-import com.example.config.annotations.DevOnlyBean
+import com.example.rag.config.annotations.DevOnlyBean
 // REQUIRED: enumerate every @Configuration class in this project that defines dev-double beans.
 // If this project also has @Component-scanned dev doubles (e.g., MockOrchestratorClient),
 // import and pass them via .withUserConfiguration(...) too. Missing imports = vacuous pass.
-import com.example.dev.DevDoublesConfig                  // contains @DevOnlyBean @Bean methods
-import com.example.dev.MockOrchestratorClient            // @DevOnlyBean @Component (playbook 04 Step 3)
+import com.example.rag.dev.DevDoublesConfig                  // contains @DevOnlyBean @Bean methods
+import com.example.rag.dev.MockOrchestratorClient            // @DevOnlyBean @Component (playbook 04 Step 3)
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -351,10 +354,10 @@ class DevDoubleGateTest {
 This test walks the production classpath without involving any Spring context. It catches the case where a dev-double class exists in source but was forgotten in the slice. Any class whose simple name matches the regex MUST carry `@DevOnlyBean` OR appear in the allow-list with a justification.
 
 ```kotlin
-// src/test/kotlin/com/example/config/DevDoubleClasspathScanTest.kt
-package com.example.config
+// src/test/kotlin/com/example/rag/config/DevDoubleClasspathScanTest.kt
+package com.example.rag.config
 
-import com.example.config.annotations.DevOnlyBean
+import com.example.rag.config.annotations.DevOnlyBean
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
@@ -368,7 +371,13 @@ class DevDoubleClasspathScanTest {
      * Production root package — the scan does NOT walk test-tree classes,
      * since test fixtures may legitimately contain dev-double-named helpers.
      */
-    private val productionBasePackage = "com.example"
+    // MUST match the @SpringBootApplication scan root (RagApplication is at
+    // com.example.rag.RagApplication, so com.example.rag is the auto-detected
+    // root). Do NOT widen this to "com.example" — that would also include the
+    // test-only synthetic fixture under com.fixtures.devdoublescan when it shares
+    // the test runtime classpath, producing false-positive failures and
+    // re-introducing the iteration-3 vacuous-pass class.
+    private val productionBasePackage = "com.example.rag"
 
     /**
      * Allow-list of class simple-names that match the dev-double regex but
@@ -467,11 +476,11 @@ class DevDoubleClasspathScanTest {
         // If this returns an empty list, the filter regex is broken and the
         // load-bearing layer is vacuous — same regression class Codex flagged in
         // iteration 2. (Add the synthetic fixture under
-        // src/test/kotlin/com/example/_devdoublescantestfixtures/MockSyntheticDouble.kt
+        // src/test/kotlin/com/fixtures/devdoublescan/MockSyntheticDouble.kt
         // — a class named `MockSyntheticDouble` with NO @DevOnlyBean annotation.
         // The fixture lives under the test tree only, NOT production, so it does
         // not trigger the production check above.)
-        val fixturePackage = "com.example._devdoublescantestfixtures"
+        val fixturePackage = "com.fixtures.devdoublescan"
         val scanner = ClassPathScanningCandidateComponentProvider(false).apply {
             addIncludeFilter(RegexPatternTypeFilter(Pattern.compile(".*")))
         }
@@ -493,8 +502,8 @@ class DevDoubleClasspathScanTest {
 **Required test fixture for the regression test (commit alongside `DevDoubleClasspathScanTest.kt`):**
 
 ```kotlin
-// src/test/kotlin/com/example/_devdoublescantestfixtures/MockSyntheticDouble.kt
-package com.example._devdoublescantestfixtures
+// src/test/kotlin/com/fixtures/devdoublescan/MockSyntheticDouble.kt
+package com.fixtures.devdoublescan
 
 import org.springframework.stereotype.Component
 
@@ -506,6 +515,66 @@ import org.springframework.stereotype.Component
  */
 @Component
 class MockSyntheticDouble
+```
+
+##### `SecurityBeansPresentTest.kt` — boot-time bean-presence sanity (catches scan-root drift)
+
+Both `DevDoubleClasspathScanTest` and `DevDoubleGateTest` operate on slices or static classpath scans. Neither asserts that the **real** `@SpringBootApplication` context wires the load-bearing security beans (`SecurityWebFilterChain` + `ReactiveJwtDecoder`). If a future contributor moves `SecurityConfig` outside `com.example.rag` — putting it under, say, `com.example.config` — Spring Boot's default scan starts at `com.example.rag` and silently skips the configuration class. The app compiles, the slice tests still pass against their explicit `withUserConfiguration(...)`, but the deployed app has no JWT validator. This sanity test boots the actual application and asserts the beans are present.
+
+```kotlin
+// src/test/kotlin/com/example/rag/security/SecurityBeansPresentTest.kt
+package com.example.rag.security
+
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.ApplicationContext
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
+import org.springframework.security.web.server.SecurityWebFilterChain
+
+@SpringBootTest(
+    // Boot the real RagApplication context. No web env needed — we only
+    // inspect bean presence, not handle requests.
+    webEnvironment = SpringBootTest.WebEnvironment.NONE,
+    properties = [
+        // Required for context startup; values are not exercised by this test
+        // because no HTTP request is sent. Real validation is OboValidationTest's job.
+        "app.entra.jwks-uri=http://localhost:0/jwks",
+        "app.entra.audience=api://placeholder",
+        "app.entra.issuer=https://placeholder/",
+    ],
+)
+class SecurityBeansPresentTest {
+
+    @Autowired private lateinit var ctx: ApplicationContext
+
+    @Test
+    fun `SecurityWebFilterChain bean is registered`() {
+        val beans = ctx.getBeansOfType(SecurityWebFilterChain::class.java)
+        assertThat(beans)
+            .withFailMessage(
+                "FAIL THE BUILD: no SecurityWebFilterChain bean is registered. " +
+                    "SecurityConfig is likely outside the @SpringBootApplication scan root " +
+                    "(expected com.example.rag.*). Move the config under the app package " +
+                    "or set @SpringBootApplication(scanBasePackages = ...) explicitly.",
+            )
+            .isNotEmpty
+    }
+
+    @Test
+    fun `ReactiveJwtDecoder bean is registered (catches scan-root drift)`() {
+        val beans = ctx.getBeansOfType(ReactiveJwtDecoder::class.java)
+        assertThat(beans)
+            .withFailMessage(
+                "FAIL THE BUILD: no ReactiveJwtDecoder bean is registered. " +
+                    "Without it, oauth2ResourceServer().jwt() has no decoder and the auth " +
+                    "boundary collapses. Likely cause: SecurityConfig package is outside the " +
+                    "@SpringBootApplication scan root.",
+            )
+            .isNotEmpty
+    }
+}
 ```
 
 **Failure modes the two tests catch together:**
@@ -527,8 +596,8 @@ Spring Security reactive `oauth2ResourceServer().jwt()` is configured against th
 **CSRF posture decision (same step):** disable CSRF for stateless JWT-authenticated endpoints via `http.csrf { it.disable() }` on `ServerHttpSecurity`. Safety rationale: CSRF defends against cookie-based credential injection (browsers auto-attach cookies to cross-origin requests). Bearer headers cannot be auto-injected cross-origin — the attacker cannot read the token from another origin (CORS) and cannot make the browser attach it (no equivalent of `SameSite` for `Authorization`). For a stateless JWT API with no cookie auth, CSRF protection is theatre and breaks legitimate clients that don't fetch a CSRF token.
 
 ```kotlin
-// src/main/kotlin/com/example/config/SecurityConfig.kt
-package com.example.config
+// src/main/kotlin/com/example/rag/config/SecurityConfig.kt
+package com.example.rag.config
 
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
@@ -614,8 +683,8 @@ The code below uses option 1.
 ##### `JwtTestKit.kt` — deterministic RSA + JWKS fixture builder
 
 ```kotlin
-// src/test/kotlin/com/example/security/JwtTestKit.kt
-package com.example.security
+// src/test/kotlin/com/example/rag/security/JwtTestKit.kt
+package com.example.rag.security
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
@@ -705,8 +774,8 @@ object JwtTestKit {
 The fix: start WireMock **before** Spring touches dynamic properties. Use a JUnit 5 `static` initializer block on the `companion object` so the server is up by the time the class is loaded — the same JVM phase that runs `@DynamicPropertySource`. Stop the server via a JVM shutdown hook (or `@AfterAll`; both work because shutdown is idempotent for WireMock). Do NOT rely on `@BeforeAll` to start WireMock for this test.
 
 ```kotlin
-// src/test/kotlin/com/example/security/OboValidationTest.kt
-package com.example.security
+// src/test/kotlin/com/example/rag/security/OboValidationTest.kt
+package com.example.rag.security
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig
@@ -850,8 +919,12 @@ All three tests **fail the build** under the following conditions:
 **`OboValidationTest` fails the build when:**
 - A request without `Authorization` header returns anything other than 401.
 - A malformed JWT, a forged JWT (signed by a key NOT in the JWKS), a JWT with wrong `aud`, or a JWT with wrong `iss` returns anything other than 401.
-- A valid JWT does NOT return 200.
+- A valid JWT does NOT return 200 with `Content-Type` compatible with `text/event-stream`.
 - `WireMockServer` is not listening at `wireMock.baseUrl()` when Spring resolves `@DynamicPropertySource` (the static initializer block in the companion object guarantees this; if scaffolders move the start logic into `@BeforeAll`, the test loses this guarantee).
+
+**`SecurityBeansPresentTest` fails the build when:**
+- The real `RagApplication` context boots without a `SecurityWebFilterChain` bean. Indicates `SecurityConfig` was placed outside the scan root (`com.example.rag.*`) or `@EnableWebFluxSecurity` is missing.
+- The context boots without a `ReactiveJwtDecoder` bean. Indicates the same scan-root regression — without the decoder, `oauth2ResourceServer().jwt()` has no signature/claim validator and the auth boundary collapses to "any string after Bearer is accepted."
 
 ---
 
