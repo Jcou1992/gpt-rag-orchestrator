@@ -151,4 +151,20 @@ let {
   localStorage: storageMl2,
   navigator,
 } = globalThis;
+
+// Multi-line method destructure from localStorage (round-53 closure).
+const {
+  setItem: siMl1,
+  getItem: giMl1,
+} = localStorage;
+
+let {
+  removeItem: riMl1,
+} = window.localStorage;
+
+// Multi-line alias from localStorage (round-53 closure).
+const lsMl1 =
+  localStorage;
+let lsMl2 =
+  window.localStorage;
 ```

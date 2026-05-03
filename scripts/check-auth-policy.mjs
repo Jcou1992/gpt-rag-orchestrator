@@ -109,22 +109,28 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-bracket-access',
     why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access (quoted, dynamic-key, or optional-chained `?.[...]`) is the same anti-pattern as setItem/getItem.',
   },
-  // ROUND-46/47/48 indirection closures.
+  // ROUND-46/47/48/53 indirection closures.
   // Aliasing: `const ls = localStorage; ls.setItem('jwt', token);`. Direct
   // method-call regex doesn't see `localStorage` on the call site, so the
   // alias declaration itself is flagged. Optional global qualifier
   // `(window|globalThis|self)` with optional optional-chaining `?.`.
+  // ROUND-53: multiline so cross-line `const ls =\n localStorage;` shapes
+  // also match.
   {
-    regex: /\b(?:const|let|var)\s+\w+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b(?!\s*\??\s*\.\s*length)/,
+    multiline: true,
+    regex: /\b(?:const|let|var)\s+\w+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b(?!\s*\??\s*\.\s*length)/g,
     label: 'localStorage-alias',
-    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified, including optional-chained variants) to a variable is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
+    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified, including optional-chained and multi-line formatted variants) to a variable is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
   },
   // Destructuring: `const { setItem } = localStorage` and dot-qualified
   // / optional-chained forms (`const { setItem } = window?.localStorage`).
+  // ROUND-53: multiline so a destructure block split across lines also
+  // matches. `[^}]*` already crosses newlines (negated class).
   {
-    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/,
+    multiline: true,
+    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
     label: 'localStorage-destructure',
-    why: 'R6a: destructuring localStorage methods into local bindings (bare, dot-qualified, or optional-chained globals) is the same anti-pattern as direct .setItem/.getItem use.',
+    why: 'R6a: destructuring localStorage methods into local bindings (bare, dot-qualified, optional-chained, or multi-line formatted globals) is the same anti-pattern as direct .setItem/.getItem use.',
   },
   // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
   // global object. `const { localStorage: storage } = window;` then
