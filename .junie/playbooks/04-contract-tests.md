@@ -775,7 +775,7 @@ validateConfigOrHalt();
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
-// LOAD-BEARING MSAL bootstrap (closes round-40 finding).
+// LOAD-BEARING MSAL bootstrap (closes rounds 40 + 41).
 //
 // MSAL v3 (@azure/msal-browser ^3.x) requires `initialize()` plus
 // `handleRedirectPromise()` to run before any token / account API call —
@@ -790,14 +790,61 @@ export const msalInstance = new PublicClientApplication(msalConfig);
 // runs exactly once per page load. If the redirect response carries an
 // account, it becomes the active account so `getAllAccounts()` returns
 // it on the next call.
+//
+// ROUND-41 closure: bootstrap rejections (corrupted redirect state,
+// blocked storage, interrupted redirect) are caught HERE and routed
+// through the same sanitized recovery UI used by `acquireTokenSilent`
+// failures. We also clear `initPromise` on failure so a user clicking
+// "Sign in again" retries the bootstrap from scratch instead of
+// reusing the rejected promise.
 let initPromise;
 function ensureInitialized() {
   if (!initPromise) {
     initPromise = (async () => {
-      await msalInstance.initialize();
-      const redirectResult = await msalInstance.handleRedirectPromise();
-      if (redirectResult && redirectResult.account) {
-        msalInstance.setActiveAccount(redirectResult.account);
+      try {
+        await msalInstance.initialize();
+        const redirectResult = await msalInstance.handleRedirectPromise();
+        if (redirectResult && redirectResult.account) {
+          msalInstance.setActiveAccount(redirectResult.account);
+        }
+      } catch (err) {
+        // Sanitized log — correlation ID only, never written to DOM.
+        // eslint-disable-next-line no-console
+        console.error('[auth] MSAL bootstrap failed', {
+          correlationId: err?.correlationId,
+          name: err?.name,
+        });
+        // Clear so a retry can re-run the bootstrap from scratch.
+        initPromise = undefined;
+        // Same sanitized recovery UI shape as the acquireTokenSilent
+        // failure path — never inject err.message / authority / etc.
+        const root = (typeof document !== 'undefined')
+          ? (document.getElementById('app') || document.body)
+          : null;
+        if (root) {
+          root.innerHTML = `
+            <div role="alert" style="font-family:system-ui;padding:2rem;max-width:40rem;margin:4rem auto;border:1px solid #c00;border-radius:8px;">
+              <h1 style="color:#c00;margin-top:0;">We couldn't sign you in</h1>
+              <p>Something went wrong while preparing the sign-in service. This is usually temporary.</p>
+              <p><button id="auth-retry" style="padding:0.5rem 1rem;font-size:1rem;">Sign in again</button></p>
+            </div>
+          `;
+          const retry = document.getElementById('auth-retry');
+          if (retry) {
+            // Re-running ensureInitialized from a click handler restarts
+            // the bootstrap; if it succeeds, the user can click again to
+            // proceed; if it fails, the same UI re-renders. No dead end.
+            retry.addEventListener('click', () => {
+              // Fire-and-forget retry. The bootstrap's own try/catch
+              // re-renders this same recovery UI on failure — swallowing
+              // the rejection here is intentional, not a credential
+              // substitution.
+              // <!-- auth-policy-allow:pb04-retry-noop-catch -->
+              ensureInitialized().catch(() => {});
+            });
+          }
+        }
+        throw new Error('AUTH_FAILED');
       }
     })();
   }

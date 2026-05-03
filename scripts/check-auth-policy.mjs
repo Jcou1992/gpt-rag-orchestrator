@@ -152,6 +152,10 @@ const ALLOWLIST = new Set([
   // obsolete env-var names so the docs explicitly warn against them.
   'pb05-env-do-not-use:VITE_MSAL_TENANT_ID',
   'pb05-env-do-not-use:VITE_MSAL_API_SCOPE',
+  // Playbook 04 retry click handler — fire-and-forget catch on a UI
+  // re-trigger of ensureInitialized. NOT a credential substitution: the
+  // bootstrap's own try/catch re-renders the recovery UI on failure.
+  'pb04-retry-noop-catch:catch-and-substitute',
 ]);
 
 // Pattern used by every allow-listed prose line to mark itself as exempt.
@@ -164,7 +168,11 @@ const ALLOW_ANCHOR_RE = /<!--\s*auth-policy-allow:([a-z0-9][a-z0-9-]*)\s*-->/i;
 // marker with arbitrary other text is NOT skipped during scanning. Used
 // in the per-line short-circuit; ALLOW_ANCHOR_RE remains the form used
 // when resolving the anchor id during the backwards walk.
-const STANDALONE_ANCHOR_RE = /^<!--\s*auth-policy-allow:([a-z0-9][a-z0-9-]*)\s*-->$/i;
+//
+// Allows an optional `//` prefix so the anchor can be embedded inside a
+// JS/TS code block as a JS line comment. Markdown prose still works
+// without the prefix.
+const STANDALONE_ANCHOR_RE = /^(?:\/\/\s*)?<!--\s*auth-policy-allow:([a-z0-9][a-z0-9-]*)\s*-->$/i;
 
 function listMarkdownFiles(dir) {
   const out = [];
