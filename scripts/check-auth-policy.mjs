@@ -118,9 +118,12 @@ const FORBIDDEN_REGEX = [
   // also match.
   {
     multiline: true,
-    regex: /\b(?:const|let|var)\s+\w+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b(?!\s*\??\s*\.\s*length)/g,
+    // ROUND-54: alias identifier accepts `[A-Za-z_$][\w$]*` (JS spec)
+    // not just `\w+`. `$` and `_` are valid identifier starts; bare
+    // `\w+` missed `const $ls = localStorage`.
+    regex: /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b(?!\s*\??\s*\.\s*length)/g,
     label: 'localStorage-alias',
-    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified, including optional-chained and multi-line formatted variants) to a variable is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
+    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified, including optional-chained and multi-line formatted variants) to a JS identifier (incl. names starting with `$` or `_`) is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
   },
   // Destructuring: `const { setItem } = localStorage` and dot-qualified
   // / optional-chained forms (`const { setItem } = window?.localStorage`).

@@ -167,4 +167,10 @@ const lsMl1 =
   localStorage;
 let lsMl2 =
   window.localStorage;
+
+// Identifiers with `$` and `_` (round-54 closure — valid JS identifier
+// chars; bare `\w+` missed them).
+const $ls = localStorage;
+let _privateLs = window.localStorage;
+const cache$store = globalThis.localStorage;
 ```
