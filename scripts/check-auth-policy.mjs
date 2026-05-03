@@ -104,6 +104,30 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-bracket-access',
     why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access is the same anti-pattern as setItem/getItem.',
   },
+  // ROUND-46 indirection closures.
+  // Aliasing: `const ls = localStorage; ls.setItem('jwt', token);`. Direct
+  // method-call regex doesn't see `localStorage` on the call site, so the
+  // alias declaration itself is flagged.
+  {
+    regex: /\b(?:const|let|var)\s+\w+\s*=\s*localStorage\b(?!\s*\.\s*length)/,
+    label: 'localStorage-alias',
+    why: 'R6a: aliasing localStorage to a variable is forbidden in the auth/api surface — the only allowed reference is no reference. (Reading `.length` for a count probe is excluded from this rule.)',
+  },
+  // Destructuring: `const { setItem } = localStorage`. The destructured
+  // binding then bypasses the direct-access regex.
+  {
+    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*localStorage\b/,
+    label: 'localStorage-destructure',
+    why: 'R6a: destructuring localStorage methods into local bindings is the same anti-pattern as direct .setItem/.getItem use.',
+  },
+  // String-keyed indirection: `globalThis['localStorage'].setItem(...)`,
+  // `window['localStorage']`, etc. Catches the literal string in any
+  // bracket-access position.
+  {
+    regex: /\[\s*['"]localStorage['"]\s*\]/,
+    label: 'localStorage-bracket-indirect',
+    why: 'R6a: indirect access to localStorage via string-keyed bracket lookup (e.g. `globalThis["localStorage"]`) is the same anti-pattern; the auth surface MUST NOT touch localStorage at all.',
+  },
   // Structural catch-and-substitute (round-33 / round-34 closures).
   //
   // Catches every `.catch(... => <body>)` shape — including:
@@ -156,45 +180,49 @@ const FORBIDDEN_REGEX = [
 ];
 
 // Allowlist of legitimate prose mentions of forbidden tokens. Each entry
-// names the playbook anchor (a stable `<!-- auth-policy-allow:<id> -->`
-// HTML comment placed immediately before the prose line) plus the exact
-// pattern that line is allowed to contain. Anchor-based allowlisting means
-// adding a new prose mention REQUIRES adding a new anchor + a new allowlist
-// entry; it is not enough to be in the same file. This closes the round-27
-// allowlist-too-broad finding (file-scope allowlist allowed any future
-// `dummy JWT` anywhere in the same playbook to silently pass).
+// is keyed by `<file>:<anchorId>:<label>` AND specifies the exact line
+// excerpt the violating line must contain. Round-46 closure: the prior
+// `<anchorId>:<label>` shape let any contributor copy an anchor anywhere
+// (any file, any content) and bypass the rule. The new shape requires
+// the anchor to live in a specific file AND the violating line to
+// match a fixed substring — both must align for the exception to apply.
 //
-// To allow-list a new line: add `<!-- auth-policy-allow:my-anchor -->`
-// immediately before the line, then add `'my-anchor:exact pattern'` here.
-const ALLOWLIST = new Set([
-  // Playbook 02 Step 3 prose explaining what NOT to generate. Same
-  // anchor allows both patterns at the same prose location.
-  'pb02-step3-no-dummy-token:dummy JWT',
-  'pb02-step3-no-dummy-token:dummy-token',
-  // Playbook 02 Step 1 .env.example callout: explicitly names obsolete
-  // env-var forms in negative ("do NOT emit") prose.
-  'pb02-step1-env-do-not-emit:VITE_MSAL_TENANT_ID',
-  'pb02-step1-env-do-not-emit:VITE_MSAL_API_SCOPE',
-  'pb02-step1-env-do-not-emit:RAG_API_URL',
+// Adding a new exception:
+//   1. Place `<!-- auth-policy-allow:<id> -->` immediately above the
+//      protected line (anchor walk-back stops at the first non-blank
+//      line).
+//   2. Add an entry below: { file, anchorId, label, excerpt }. `file`
+//      is the path RELATIVE to repo root. `excerpt` is a substring of
+//      the protected line (full line works; partial works as long as
+//      it's distinctive enough to prevent false positives from a copy-
+//      paste regression elsewhere in the same file).
+const ALLOWLIST = [
+  // Playbook 02 Step 3 prose explaining what NOT to generate.
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step3-no-dummy-token', label: 'dummy JWT',           excerpt: 'does NOT generate a dummy-JWT' },
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step3-no-dummy-token', label: 'dummy-token',          excerpt: 'separate dummy-token `auth.js`' },
+  // Playbook 02 Step 1 .env.example callout: negative ("do NOT emit") prose.
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step1-env-do-not-emit', label: 'VITE_MSAL_TENANT_ID',  excerpt: 'Do NOT emit' },
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step1-env-do-not-emit', label: 'VITE_MSAL_API_SCOPE',  excerpt: 'Do NOT emit' },
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step1-env-do-not-emit', label: 'RAG_API_URL',          excerpt: 'Do NOT emit' },
   // Playbook 02 Step 3 MSAL-now branch: same negative-prose pattern.
-  'pb02-step3-env-do-not-use:VITE_MSAL_TENANT_ID',
-  'pb02-step3-env-do-not-use:VITE_MSAL_API_SCOPE',
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step3-env-do-not-use', label: 'VITE_MSAL_TENANT_ID',   excerpt: 'do NOT use' },
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-step3-env-do-not-use', label: 'VITE_MSAL_API_SCOPE',   excerpt: 'do NOT use' },
   // Playbook 02 Environment-variables docs section: lead-in negative prose.
-  'pb02-envvars-do-not-use:VITE_MSAL_TENANT_ID',
-  'pb02-envvars-do-not-use:VITE_MSAL_API_SCOPE',
-  // Playbook 05 .env.local example block: negative reminder for the
-  // obsolete env-var names so the docs explicitly warn against them.
-  'pb05-env-do-not-use:VITE_MSAL_TENANT_ID',
-  'pb05-env-do-not-use:VITE_MSAL_API_SCOPE',
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-envvars-do-not-use', label: 'VITE_MSAL_TENANT_ID',     excerpt: 'are **not** valid' },
+  { file: '.junie/playbooks/02-frontend-scaffold.md', anchorId: 'pb02-envvars-do-not-use', label: 'VITE_MSAL_API_SCOPE',     excerpt: 'are **not** valid' },
+  // Playbook 05 .env.local example block: negative reminder.
+  { file: '.junie/playbooks/05-docs-generation.md',   anchorId: 'pb05-env-do-not-use', label: 'VITE_MSAL_TENANT_ID',         excerpt: 'do NOT use these names' },
+  { file: '.junie/playbooks/05-docs-generation.md',   anchorId: 'pb05-env-do-not-use', label: 'VITE_MSAL_API_SCOPE',         excerpt: 'do NOT use these names' },
   // Playbook 04 retry click handler — fire-and-forget catch on a UI
-  // re-trigger of ensureInitialized. NOT a credential substitution: the
-  // bootstrap's own try/catch re-renders the recovery UI on failure.
-  'pb04-retry-noop-catch:catch-and-substitute',
-  // Playbook 05 DEBUG-flag localStorage usage — explicitly NOT a token
-  // store. Documented for browser-console debugging only; the scaffolder
-  // does not generate this code path into the application.
-  'pb05-debug-flag-localstorage:localStorage-api-call',
-]);
+  // re-trigger of ensureInitialized. NOT a credential substitution.
+  { file: '.junie/playbooks/04-contract-tests.md',    anchorId: 'pb04-retry-noop-catch', label: 'catch-and-substitute',     excerpt: 'ensureInitialized().then(() => window.location.reload()).catch(() => {});' },
+  // Playbook 05 DEBUG-flag localStorage usage — exact line match.
+  // Round-46 hardening: excerpt is the FULL DEBUG line. Any other
+  // localStorage use under this anchor (e.g. a copy-pasted regression
+  // putting jwt instead of DEBUG) fails the excerpt check and gets
+  // flagged.
+  { file: '.junie/playbooks/05-docs-generation.md',   anchorId: 'pb05-debug-flag-localstorage', label: 'localStorage-api-call', excerpt: "localStorage.setItem('DEBUG', 'rag:*')" },
+];
 
 // Pattern used by every allow-listed prose line to mark itself as exempt.
 // Must be on the line IMMEDIATELY ABOVE the line that contains the
@@ -247,16 +275,30 @@ function scanFile(file) {
     // mixed line like `<!-- auth-policy-allow:foo --> harmless prose`
     // is rejected because it would otherwise let an anchor resolve for
     // the line *after* it without any explicit allowlist intent.
-    // Round-29 closed this drift class.
-    const isAllowed = (label) => {
+    // Round-29 closed that drift class.
+    //
+    // Round-46 hardening: each ALLOWLIST entry binds the exception to a
+    // specific FILE and a substring EXCERPT of the protected line — the
+    // anchor alone is not enough. Copying the same anchor before a
+    // different forbidden line, or into a different file, fails the
+    // `file` or `excerpt` match and the violation reports normally.
+    const fileRel = relative(REPO_ROOT, file);
+    const isAllowed = (label, lineText) => {
       for (let k = i - 1; k >= 0; k--) {
         const prev = lines[k];
         if (prev.trim() === '') continue;
         const trimmed = prev.trim();
         if (!STANDALONE_ANCHOR_RE.test(trimmed)) return false;
         const m = trimmed.match(ALLOW_ANCHOR_RE);
-        if (m && ALLOWLIST.has(`${m[1]}:${label}`)) return true;
-        return false;
+        if (!m) return false;
+        const anchorId = m[1];
+        return ALLOWLIST.some(
+          (e) =>
+            e.file === fileRel &&
+            e.anchorId === anchorId &&
+            e.label === label &&
+            lineText.includes(e.excerpt),
+        );
       }
       return false;
     };
@@ -266,7 +308,7 @@ function scanFile(file) {
     // Substring rules.
     for (const rule of FORBIDDEN) {
       if (!line.includes(rule.pattern)) continue;
-      if (isAllowed(rule.pattern)) continue;
+      if (isAllowed(rule.pattern, line)) continue;
       violations.push({
         file: rel,
         line: i + 1,
@@ -280,7 +322,7 @@ function scanFile(file) {
     for (const rule of FORBIDDEN_REGEX) {
       if (rule.multiline) continue;
       if (!rule.regex.test(line)) continue;
-      if (isAllowed(rule.label)) continue;
+      if (isAllowed(rule.label, line)) continue;
       violations.push({
         file: rel,
         line: i + 1,
@@ -319,14 +361,25 @@ function scanFile(file) {
       const lineNumber = commentStripped.slice(0, m.index).split('\n').length;
       // Allowlist resolution: walk backwards from the line of the match
       // for a STANDALONE anchor (same semantics as the line-scoped path).
+      // Round-46 hardening: file + excerpt match required.
       let allowed = false;
+      const matchedLine = lines[lineNumber - 1] || '';
       for (let k = lineNumber - 2; k >= 0; k--) {
         const prev = lines[k];
         if (prev.trim() === '') continue;
         const trimmed = prev.trim();
         if (!STANDALONE_ANCHOR_RE.test(trimmed)) break;
         const am = trimmed.match(ALLOW_ANCHOR_RE);
-        if (am && ALLOWLIST.has(`${am[1]}:${rule.label}`)) { allowed = true; }
+        if (am) {
+          const anchorId = am[1];
+          allowed = ALLOWLIST.some(
+            (e) =>
+              e.file === rel &&
+              e.anchorId === anchorId &&
+              e.label === rule.label &&
+              matchedLine.includes(e.excerpt),
+          );
+        }
         break;
       }
       if (allowed) continue;

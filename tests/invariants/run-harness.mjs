@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 49,                 // 43 (round-44) + 6 round-45 localStorage API-access lines (4 method + 2 bracket)
+    expectedViolations: 58,                 // 49 (round-45) + 9 round-46 indirection lines (3 alias + 2 destructure + 2 bracket-indirect + 2 calls on indirect bracket)
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
@@ -112,6 +112,9 @@ const cases = [
       'token in localStorage',    // round-44 token variant
       'localStorage-api-call',    // round-45 localStorage method-call regex
       'localStorage-bracket-access', // round-45 localStorage bracket-access regex
+      'localStorage-alias',       // round-46 alias declaration
+      'localStorage-destructure', // round-46 destructuring
+      'localStorage-bracket-indirect', // round-46 ['localStorage']
     ],
   },
 ];

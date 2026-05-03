@@ -100,3 +100,21 @@ localStorage.removeItem('access_token');
 localStorage['access_token'] = result.accessToken;
 const t = localStorage["jwt"];
 ```
+
+## Forbidden localStorage indirection (round-46)
+
+Bypass shapes that aliasing / destructuring / global-scope bracket
+indirection would otherwise hide:
+
+```javascript
+// Alias: indirect call site bypasses the direct .setItem regex.
+const ls = localStorage;
+let storage = localStorage;
+var s = localStorage;
+// Destructuring: bound names lose the `localStorage` prefix.
+const { setItem } = localStorage;
+let { getItem, removeItem } = localStorage;
+// Bracket-key indirection through global objects.
+globalThis['localStorage'].setItem('jwt', token);
+window["localStorage"].setItem('access_token', t);
+```
