@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 72,                 // 69 (round-49) + 3 round-50 lines (dynamic-bracket + 2 arbitrary dot-property)
+    expectedViolations: 75,                 // 72 (round-50) + 3 round-51 global-destructure lines
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
@@ -115,6 +115,7 @@ const cases = [
       'localStorage-alias',       // round-46 alias declaration
       'localStorage-destructure', // round-46 destructuring
       'localStorage-bracket-indirect', // round-46 ['localStorage']
+      'localStorage-global-destructure', // round-51 destructure from window/globalThis/self
     ],
   },
 ];

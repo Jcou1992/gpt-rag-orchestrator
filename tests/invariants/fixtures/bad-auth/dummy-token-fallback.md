@@ -136,4 +136,9 @@ const { setItem: si2 } = window?.localStorage;
 localStorage[JWT_KEY] = token;
 localStorage.jwt = token;
 window.localStorage.access_token = result.accessToken;
+
+// Destructuring localStorage OUT of a global object (round-51 closure).
+const { localStorage: storage1 } = window;
+const { localStorage } = globalThis;
+let { localStorage: ls3 } = self;
 ```
