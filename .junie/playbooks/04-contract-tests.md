@@ -741,12 +741,22 @@ function validateConfigOrHalt() {
     ['apiBaseUrl', apiBaseUrl],        // VITE_RAG_API_URL — fail-closed at startup
   ];
   const bad = checks.filter(([, v]) => isPlaceholder(v));
-  // Extra check for apiBaseUrl: must parse as a URL. A non-placeholder
-  // string that is not a valid URL still belongs in the config-error
-  // screen rather than failing later inside `new URL(path, base)` in
-  // ragApi.js. Skip if the placeholder check already caught it.
+  // Extra checks for apiBaseUrl: must parse as a URL AND must use HTTPS in
+  // production. A non-placeholder string that is not a valid URL still
+  // belongs in the config-error screen rather than failing later inside
+  // `new URL(path, base)` in ragApi.js. The HTTPS-in-prod check closes the
+  // round-40 finding: `http://api.example.com` would otherwise pass the
+  // placeholder + URL-parse checks and the bearer-token fetch in ragApi.js
+  // would send the Entra ID token in cleartext.
   if (!bad.find(([k]) => k === 'apiBaseUrl')) {
-    try { new URL(apiBaseUrl); } catch { bad.push(['apiBaseUrl', apiBaseUrl]); }
+    try {
+      const u = new URL(apiBaseUrl);
+      if (import.meta.env.PROD && u.protocol !== 'https:') {
+        bad.push(['apiBaseUrl', `${apiBaseUrl} (production builds require https://)`]);
+      }
+    } catch {
+      bad.push(['apiBaseUrl', apiBaseUrl]);
+    }
   }
   if (bad.length > 0) {
     const root = document.getElementById('app') || document.body;
@@ -765,6 +775,35 @@ validateConfigOrHalt();
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
+// LOAD-BEARING MSAL bootstrap (closes round-40 finding).
+//
+// MSAL v3 (@azure/msal-browser ^3.x) requires `initialize()` plus
+// `handleRedirectPromise()` to run before any token / account API call —
+// otherwise `getAllAccounts()` returns an empty list during the post-
+// login redirect tick, the no-account branch in `getToken()` fires
+// `loginRedirect()` again, and the user bounces in a redirect loop or
+// hits an unhandled MSAL initialization error before the sanitized
+// recovery UI can render.
+//
+// `initPromise` is a memoized singleton: every call to `getToken()`
+// awaits it, but the underlying initialize + redirect-handling work
+// runs exactly once per page load. If the redirect response carries an
+// account, it becomes the active account so `getAllAccounts()` returns
+// it on the next call.
+let initPromise;
+function ensureInitialized() {
+  if (!initPromise) {
+    initPromise = (async () => {
+      await msalInstance.initialize();
+      const redirectResult = await msalInstance.handleRedirectPromise();
+      if (redirectResult && redirectResult.account) {
+        msalInstance.setActiveAccount(redirectResult.account);
+      }
+    })();
+  }
+  return initPromise;
+}
+
 /**
  * Acquire a token silently, redirecting only on InteractionRequiredAuthError.
  * Other MSAL errors surface as a sanitized user-visible error — never
@@ -773,6 +812,11 @@ export const msalInstance = new PublicClientApplication(msalConfig);
  * user is not stuck on a dead-end message.
  */
 export async function getToken(scopes) {
+  // MSAL v3 bootstrap MUST complete before any account/token API call.
+  // ensureInitialized() runs initialize() + handleRedirectPromise() once
+  // per page load; without it, post-redirect users would land here with
+  // an un-hydrated account list and bounce back into loginRedirect().
+  await ensureInitialized();
   const accounts = msalInstance.getAllAccounts();
   if (accounts.length === 0) {
     // First-visit / cleared-session-storage case: there is no MSAL account
