@@ -85,3 +85,18 @@ matches verbatim:
 - Auth fallback uses a localStorage-backed JWT when MSAL fails.
 - The dev stub stores the JWT in localStorage so reloads keep the user signed in.
 - Persist the token in localStorage as a fallback.
+
+## Forbidden localStorage API access (round-45)
+
+Code-level localStorage usage in an auth/api surface — round-45 closure
+for the v3 leak class that the iter-44 phrase rules missed:
+
+```javascript
+// All of these must be flagged.
+localStorage.setItem('jwt', token);
+localStorage.setItem('access_token', result.accessToken);
+const jwt = localStorage.getItem('jwt');
+localStorage.removeItem('access_token');
+localStorage['access_token'] = result.accessToken;
+const t = localStorage["jwt"];
+```

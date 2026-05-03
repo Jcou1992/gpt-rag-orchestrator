@@ -86,6 +86,24 @@ const FORBIDDEN_REGEX = [
     label: 'RAG_API_URL',
     why: 'env var must be VITE_RAG_API_URL — Vite exposes only VITE_-prefixed names to the bundle',
   },
+  // localStorage API access — round-45 closure. R6a forbids ANY token
+  // persistence in localStorage; the iter-44 phrase rules only matched
+  // English prose, so a code regression like
+  // `localStorage.setItem('jwt', token)` would have shipped uncaught.
+  // Method-call form covers `setItem` / `getItem` / `removeItem` / `clear`
+  // / `key` / `length` API surface. Any legitimate use (e.g., a debug
+  // flag) needs an explicit allow-anchor.
+  {
+    regex: /\blocalStorage\s*\.\s*(setItem|getItem|removeItem|clear|key|length)\b/,
+    label: 'localStorage-api-call',
+    why: 'R6a: tokens MUST NOT be persisted in localStorage. ANY localStorage API access in a scaffolded auth/api surface is forbidden by default; allow-anchor explicitly if non-token use is unavoidable.',
+  },
+  // Bracket-access form covers `localStorage['jwt']` / `localStorage["x"]`.
+  {
+    regex: /\blocalStorage\s*\[\s*['"]/,
+    label: 'localStorage-bracket-access',
+    why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access is the same anti-pattern as setItem/getItem.',
+  },
   // Structural catch-and-substitute (round-33 / round-34 closures).
   //
   // Catches every `.catch(... => <body>)` shape — including:
@@ -172,6 +190,10 @@ const ALLOWLIST = new Set([
   // re-trigger of ensureInitialized. NOT a credential substitution: the
   // bootstrap's own try/catch re-renders the recovery UI on failure.
   'pb04-retry-noop-catch:catch-and-substitute',
+  // Playbook 05 DEBUG-flag localStorage usage — explicitly NOT a token
+  // store. Documented for browser-console debugging only; the scaffolder
+  // does not generate this code path into the application.
+  'pb05-debug-flag-localstorage:localStorage-api-call',
 ]);
 
 // Pattern used by every allow-listed prose line to mark itself as exempt.

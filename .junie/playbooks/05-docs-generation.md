@@ -523,7 +523,8 @@ git commit -m "refactor(rag-chat): simplify state initialization — tests green
 ### Frontend
 
 \`\`\`javascript
-// In browser console
+// In browser console — DEBUG flag only, NEVER tokens (R6a).
+// <!-- auth-policy-allow:pb05-debug-flag-localstorage -->
 localStorage.setItem('DEBUG', 'rag:*');
 location.reload();
 // Now see detailed logs
