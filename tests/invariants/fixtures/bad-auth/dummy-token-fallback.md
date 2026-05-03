@@ -208,4 +208,9 @@ this[`prefix-${parts[idx[0]]}`] = globalThis.localStorage;
 holder[keys[parts[indexes[0]]]] = localStorage;
 state[getKey(getOther(parts[idx[lookup[0]]]))] = window.localStorage;
 this[deeply.nested.path[a[b[c[d[0]]]]]] = globalThis.localStorage;
+
+// Parenthesized RHS (round-61 closure).
+holder.tokenStore = (localStorage);
+holder.tokenStore = (window.localStorage);
+this.cache = ((globalThis.localStorage));
 ```

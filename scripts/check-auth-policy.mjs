@@ -248,7 +248,12 @@ const FORBIDDEN_SCANNERS = [
     // rule's territory).
     scan(text) {
       const out = [];
-      const rhsRe = /=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g;
+      // ROUND-61: accept optional parens around the RHS qualified
+      // localStorage expression (`= (localStorage)`, `= (window.localStorage)`).
+      // `\(*` matches zero or more opening parens; we don't require
+      // matching `)` because the LHS walk only cares about the `=`
+      // position. Whitespace tolerated between every token.
+      const rhsRe = /=\s*\(*\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g;
       let m;
       while ((m = rhsRe.exec(text)) !== null) {
         // Position of the `=` itself; walk backwards from it.
