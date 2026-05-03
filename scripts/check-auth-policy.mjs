@@ -104,21 +104,23 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-bracket-access',
     why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access is the same anti-pattern as setItem/getItem.',
   },
-  // ROUND-46 indirection closures.
+  // ROUND-46 indirection closures (round-47 extends to dot-qualified
+  // globals: `window.localStorage`, `globalThis.localStorage`, etc.).
   // Aliasing: `const ls = localStorage; ls.setItem('jwt', token);`. Direct
   // method-call regex doesn't see `localStorage` on the call site, so the
-  // alias declaration itself is flagged.
+  // alias declaration itself is flagged. Optional `(window|globalThis|
+  // self)\.` prefix catches dot-qualified globals after round 47.
   {
-    regex: /\b(?:const|let|var)\s+\w+\s*=\s*localStorage\b(?!\s*\.\s*length)/,
+    regex: /\b(?:const|let|var)\s+\w+\s*=\s*(?:(?:window|globalThis|self)\s*\.\s*)?localStorage\b(?!\s*\.\s*length)/,
     label: 'localStorage-alias',
-    why: 'R6a: aliasing localStorage to a variable is forbidden in the auth/api surface — the only allowed reference is no reference. (Reading `.length` for a count probe is excluded from this rule.)',
+    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified) to a variable is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
   },
-  // Destructuring: `const { setItem } = localStorage`. The destructured
-  // binding then bypasses the direct-access regex.
+  // Destructuring: `const { setItem } = localStorage` and dot-qualified
+  // forms `const { setItem } = window.localStorage`.
   {
-    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*localStorage\b/,
+    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:(?:window|globalThis|self)\s*\.\s*)?localStorage\b/,
     label: 'localStorage-destructure',
-    why: 'R6a: destructuring localStorage methods into local bindings is the same anti-pattern as direct .setItem/.getItem use.',
+    why: 'R6a: destructuring localStorage methods into local bindings (bare or dot-qualified globals) is the same anti-pattern as direct .setItem/.getItem use.',
   },
   // String-keyed indirection: `globalThis['localStorage'].setItem(...)`,
   // `window['localStorage']`, etc. Catches the literal string in any

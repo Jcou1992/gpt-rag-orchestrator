@@ -117,4 +117,10 @@ let { getItem, removeItem } = localStorage;
 // Bracket-key indirection through global objects.
 globalThis['localStorage'].setItem('jwt', token);
 window["localStorage"].setItem('access_token', t);
+// Dot-qualified globals (round-47 closure).
+const wls = window.localStorage;
+const gls = globalThis.localStorage;
+let sls = self.localStorage;
+const { setItem } = window.localStorage;
+let { getItem, removeItem } = globalThis.localStorage;
 ```
