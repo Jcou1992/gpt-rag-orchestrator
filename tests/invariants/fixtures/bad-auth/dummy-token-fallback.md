@@ -188,4 +188,9 @@ const cHolder = { [keyName]: localStorage };
 holder['ls'] = localStorage;
 this['storage'] = localStorage;
 state["cache"] = window.localStorage;
+
+// Computed-bracket LHS (round-57 closure).
+holder[keyName] = localStorage;
+this[storageKey] = window.localStorage;
+state[`prefix-${suffix}`] = globalThis.localStorage;
 ```

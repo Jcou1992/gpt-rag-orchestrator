@@ -148,15 +148,15 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-object-literal-value',
     why: 'R6a: assigning localStorage to an object-literal value (identifier, quoted-string, or computed key) is forbidden — the property holder bypasses every direct-access regex.',
   },
-  // ROUND-55 + ROUND-56: property assignment. LHS supports both dot and
-  // bracket access; requires AT LEAST ONE access step so it doesn't
-  // double-match the alias rule (which covers `const ls = localStorage`).
-  // Each access step is `.ident` OR `['key']` OR `["key"]`.
+  // ROUND-55 + ROUND-56 + ROUND-57: property assignment. LHS supports
+  // dot AND bracket access; bracket access accepts ANY expression (quoted
+  // string, computed identifier, template literal). Requires >=1 access
+  // step so it doesn't double-match the alias rule.
   {
     multiline: true,
-    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\s*['"][^'"]*['"]\s*\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
+    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
     label: 'localStorage-property-assign',
-    why: 'R6a: assigning localStorage to an object/class property (`this.storage`, `holder.ls`, `holder["ls"]`, `this[\'storage\']`) is forbidden — the property-bound binding bypasses every direct-access regex.',
+    why: 'R6a: assigning localStorage to an object/class property (`this.storage`, `holder.ls`, `holder["ls"]`, `holder[keyName]`, `this[storageKey]`) is forbidden — the property-bound binding bypasses every direct-access regex.',
   },
   // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
   // global object. `const { localStorage: storage } = window;` then
