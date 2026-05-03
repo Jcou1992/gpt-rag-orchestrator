@@ -86,41 +86,40 @@ const FORBIDDEN_REGEX = [
     label: 'RAG_API_URL',
     why: 'env var must be VITE_RAG_API_URL — Vite exposes only VITE_-prefixed names to the bundle',
   },
-  // localStorage API access — round-45 closure. R6a forbids ANY token
-  // persistence in localStorage; the iter-44 phrase rules only matched
-  // English prose, so a code regression like
-  // `localStorage.setItem('jwt', token)` would have shipped uncaught.
-  // Method-call form covers `setItem` / `getItem` / `removeItem` / `clear`
-  // / `key` / `length` API surface. Any legitimate use (e.g., a debug
-  // flag) needs an explicit allow-anchor.
+  // localStorage API access — round-45 closure, round-48 extends to
+  // optional-chained method invocation (`localStorage?.setItem(...)`).
+  // R6a forbids ANY token persistence in localStorage. Method-call form
+  // covers setItem / getItem / removeItem / clear / key / length API
+  // surface. Any legitimate use (e.g., a debug flag) needs an explicit
+  // allow-anchor.
   {
-    regex: /\blocalStorage\s*\.\s*(setItem|getItem|removeItem|clear|key|length)\b/,
+    regex: /\blocalStorage\s*\??\s*\.\s*(setItem|getItem|removeItem|clear|key|length)\b/,
     label: 'localStorage-api-call',
-    why: 'R6a: tokens MUST NOT be persisted in localStorage. ANY localStorage API access in a scaffolded auth/api surface is forbidden by default; allow-anchor explicitly if non-token use is unavoidable.',
+    why: 'R6a: tokens MUST NOT be persisted in localStorage. ANY localStorage API access (including optional-chained `?.`) in a scaffolded auth/api surface is forbidden by default; allow-anchor explicitly if non-token use is unavoidable.',
   },
-  // Bracket-access form covers `localStorage['jwt']` / `localStorage["x"]`.
+  // Bracket-access form covers `localStorage['jwt']` / `localStorage["x"]`
+  // and the optional-chained variant `localStorage?.['x']`.
   {
-    regex: /\blocalStorage\s*\[\s*['"]/,
+    regex: /\blocalStorage\s*\??\s*\[\s*['"]/,
     label: 'localStorage-bracket-access',
-    why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access is the same anti-pattern as setItem/getItem.',
+    why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access (including optional-chained `?.[...]`) is the same anti-pattern as setItem/getItem.',
   },
-  // ROUND-46 indirection closures (round-47 extends to dot-qualified
-  // globals: `window.localStorage`, `globalThis.localStorage`, etc.).
+  // ROUND-46/47/48 indirection closures.
   // Aliasing: `const ls = localStorage; ls.setItem('jwt', token);`. Direct
   // method-call regex doesn't see `localStorage` on the call site, so the
-  // alias declaration itself is flagged. Optional `(window|globalThis|
-  // self)\.` prefix catches dot-qualified globals after round 47.
+  // alias declaration itself is flagged. Optional global qualifier
+  // `(window|globalThis|self)` with optional optional-chaining `?.`.
   {
-    regex: /\b(?:const|let|var)\s+\w+\s*=\s*(?:(?:window|globalThis|self)\s*\.\s*)?localStorage\b(?!\s*\.\s*length)/,
+    regex: /\b(?:const|let|var)\s+\w+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b(?!\s*\??\s*\.\s*length)/,
     label: 'localStorage-alias',
-    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified) to a variable is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
+    why: 'R6a: aliasing localStorage (bare or window./globalThis./self.-qualified, including optional-chained variants) to a variable is forbidden in the auth/api surface. (Reading `.length` for a count probe is excluded.)',
   },
   // Destructuring: `const { setItem } = localStorage` and dot-qualified
-  // forms `const { setItem } = window.localStorage`.
+  // / optional-chained forms (`const { setItem } = window?.localStorage`).
   {
-    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:(?:window|globalThis|self)\s*\.\s*)?localStorage\b/,
+    regex: /\b(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/,
     label: 'localStorage-destructure',
-    why: 'R6a: destructuring localStorage methods into local bindings (bare or dot-qualified globals) is the same anti-pattern as direct .setItem/.getItem use.',
+    why: 'R6a: destructuring localStorage methods into local bindings (bare, dot-qualified, or optional-chained globals) is the same anti-pattern as direct .setItem/.getItem use.',
   },
   // String-keyed indirection: `globalThis['localStorage'].setItem(...)`,
   // `window['localStorage']`, etc. Catches the literal string in any

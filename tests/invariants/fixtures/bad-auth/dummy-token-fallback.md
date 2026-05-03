@@ -123,4 +123,12 @@ const gls = globalThis.localStorage;
 let sls = self.localStorage;
 const { setItem } = window.localStorage;
 let { getItem, removeItem } = globalThis.localStorage;
+
+// Optional-chained variants (round-48 closure).
+window.localStorage?.setItem('jwt', token);
+localStorage?.setItem('access_token', t);
+localStorage?.['jwt'] = token;
+const wls2 = window?.localStorage;
+const gls2 = globalThis?.localStorage;
+const { setItem: si2 } = window?.localStorage;
 ```

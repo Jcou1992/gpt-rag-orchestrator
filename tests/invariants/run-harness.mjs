@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 63,                 // 58 (round-46) + 5 round-47 dot-qualified globals (3 alias + 2 destructure on window./globalThis./self.localStorage)
+    expectedViolations: 68,                 // 63 (round-47) + 5 round-48 optional-chained variants
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
