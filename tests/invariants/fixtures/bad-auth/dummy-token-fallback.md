@@ -203,4 +203,9 @@ this[`prefix-${parts[0]}`] = globalThis.localStorage;
 holder[keys[parts[0]]] = localStorage;
 state[getKey(parts[idx[0]])] = window.localStorage;
 this[`prefix-${parts[idx[0]]}`] = globalThis.localStorage;
+
+// Arbitrary-depth nested LHS (round-60 — balanced-bracket scanner).
+holder[keys[parts[indexes[0]]]] = localStorage;
+state[getKey(getOther(parts[idx[lookup[0]]]))] = window.localStorage;
+this[deeply.nested.path[a[b[c[d[0]]]]]] = globalThis.localStorage;
 ```

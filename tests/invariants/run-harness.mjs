@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 104,                // 101 (round-58) + 3 round-59 two-level-nested-bracket LHS
+    expectedViolations: 107,                // 104 (round-59) + 3 round-60 arbitrary-depth nested LHS (balanced-bracket scanner)
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',

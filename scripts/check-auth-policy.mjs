@@ -148,19 +148,10 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-object-literal-value',
     why: 'R6a: assigning localStorage to an object-literal value (identifier, quoted-string, or computed key) is forbidden — the property holder bypasses every direct-access regex.',
   },
-  // ROUND-55 → ROUND-59: property assignment. LHS supports dot AND
-  // bracket access; bracket content allows up to TWO levels of nested
-  // brackets (closes round-59: `holder[keys[parts[0]]] = localStorage`).
-  // Each `[...]` step is matched with two layers of recursion baked in;
-  // 3+ levels still bypass — Codex (rounds 53/56/58/59) has explicitly
-  // recommended switching to an AST scanner. v4.1 backlog item; for
-  // now incremental regex hardening keeps the loop progressing.
-  {
-    multiline: true,
-    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[(?:[^\[\]]|\[(?:[^\[\]]|\[[^\]]*\])*\])+\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
-    label: 'localStorage-property-assign',
-    why: 'R6a: assigning localStorage to an object/class property (incl. nested-bracket computed keys up to two levels deep, e.g. `holder[keys[parts[0]]] = localStorage`) is forbidden — the property-bound binding bypasses every direct-access regex.',
-  },
+  // ROUND-55 → ROUND-59: property-assign — replaced by a balanced-
+  // bracket scanner (FORBIDDEN_SCANNERS below) in round 60. The regex
+  // approach hit a treadmill at every new nesting depth; the scanner
+  // handles arbitrary depth because it counts brackets/parens directly.
   // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
   // global object. `const { localStorage: storage } = window;` then
   // `storage.jwt = token` — the destructured binding bypasses every
@@ -237,6 +228,72 @@ const FORBIDDEN_REGEX = [
     regex: /\.catch\s*\(\s*[^){}]*?\bfunction\b[\s\S]*?\)\s*\{[\s\S]*?\}/g,
     label: 'catch-fn-substitute',
     why: 'production auth.js / ragApi.js MUST throw on getToken failure (R8) — any `.catch(... function ...)` handler is forbidden (parenthesized, async, commented variants included) unless the body re-throws unconditionally (use an explicit allow-anchor)',
+  },
+];
+
+// FORBIDDEN_SCANNERS — round-60. Custom scanners for shapes the regex
+// set can't handle without depth-bounded recursion. Each scanner is
+// `{ scan(text) → [{ index, lineNumber, lhs, full }], label, why }`.
+// The whole-file scan loop iterates these alongside FORBIDDEN_REGEX
+// multiline rules; allowlist resolution is shared.
+const FORBIDDEN_SCANNERS = [
+  {
+    label: 'localStorage-property-assign',
+    why: 'R6a: assigning localStorage to an object/class property (any LHS member-expression with arbitrary nested computed keys) is forbidden — the property-bound binding bypasses every direct-access regex.',
+    // Balanced-bracket scanner. Walks every `= localStorage` (with
+    // optional global qualifier) RHS, balances brackets/parens to
+    // capture the LHS, and flags it if the LHS is a member expression
+    // (contains `.` or `[`). Skips bare-identifier LHS (alias rule
+    // already covers that) and `const|let|var` declarations (alias
+    // rule's territory).
+    scan(text) {
+      const out = [];
+      const rhsRe = /=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g;
+      let m;
+      while ((m = rhsRe.exec(text)) !== null) {
+        // Position of the `=` itself; walk backwards from it.
+        let i = m.index - 1;
+        while (i >= 0 && /\s/.test(text[i])) i--;
+        if (i < 0) continue;
+        const lhsEnd = i;
+        // Balance brackets/parens walking backwards.
+        let depth = 0;
+        while (i >= 0) {
+          const c = text[i];
+          if (c === ']' || c === ')') {
+            depth++;
+          } else if (c === '[' || c === '(') {
+            if (depth === 0) { break; } // unbalanced opening -> end of LHS
+            depth--;
+          } else if (depth === 0) {
+            // Top-level boundary characters terminate the LHS scan.
+            if (c === ',' || c === ';' || c === '{' || c === '}' || c === '\n') break;
+            // Whitespace only ends LHS when followed by a non-identifier
+            // continuation; for safety, stop on whitespace if the next
+            // non-whitespace going forward is a boundary too.
+          }
+          i--;
+        }
+        const lhsStart = i + 1;
+        const lhs = text.slice(lhsStart, lhsEnd + 1).trim();
+        if (!lhs) continue;
+        // Skip bare-identifier LHS (already covered by alias rule).
+        if (/^[A-Za-z_$][\w$]*$/.test(lhs)) continue;
+        // Skip if preceded by const|let|var (alias rule's territory).
+        const beforeLhs = text.slice(0, lhsStart).trimEnd();
+        if (/\b(?:const|let|var)\s*$/.test(beforeLhs)) continue;
+        // Must contain a member expression (dot or bracket access).
+        if (!/[.\[]/.test(lhs)) continue;
+        const lineNumber = text.slice(0, lhsStart).split('\n').length;
+        out.push({
+          index: lhsStart,
+          lineNumber,
+          lhs,
+          full: `${lhs} ${text.slice(m.index, m.index + m[0].length)}`,
+        });
+      }
+      return out;
+    },
   },
 ];
 
@@ -450,6 +507,45 @@ function scanFile(file) {
         pattern: rule.label,
         why: rule.why,
         excerpt: m[0].replace(/\s+/g, ' ').slice(0, 120),
+      });
+    }
+  }
+
+  // FORBIDDEN_SCANNERS — round-60. Custom scan functions for shapes
+  // regex can't handle without depth-bounded recursion. Each scanner
+  // returns a list of `{ index, lineNumber, lhs, full }` hits over the
+  // comment-stripped text. Allowlist resolution mirrors the regex path
+  // (file + anchor id + label + excerpt match).
+  for (const scanner of FORBIDDEN_SCANNERS) {
+    const hits = scanner.scan(commentStripped);
+    for (const hit of hits) {
+      const matchedLine = lines[hit.lineNumber - 1] || '';
+      let allowed = false;
+      for (let k = hit.lineNumber - 2; k >= 0; k--) {
+        const prev = lines[k];
+        if (prev.trim() === '') continue;
+        const trimmed = prev.trim();
+        if (!STANDALONE_ANCHOR_RE.test(trimmed)) break;
+        const am = trimmed.match(ALLOW_ANCHOR_RE);
+        if (am) {
+          const anchorId = am[1];
+          allowed = ALLOWLIST.some(
+            (e) =>
+              e.file === rel &&
+              e.anchorId === anchorId &&
+              e.label === scanner.label &&
+              matchedLine.includes(e.excerpt),
+          );
+        }
+        break;
+      }
+      if (allowed) continue;
+      violations.push({
+        file: rel,
+        line: hit.lineNumber,
+        pattern: scanner.label,
+        why: scanner.why,
+        excerpt: hit.full.replace(/\s+/g, ' ').slice(0, 120),
       });
     }
   }
