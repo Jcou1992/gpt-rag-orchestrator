@@ -193,4 +193,9 @@ state["cache"] = window.localStorage;
 holder[keyName] = localStorage;
 this[storageKey] = window.localStorage;
 state[`prefix-${suffix}`] = globalThis.localStorage;
+
+// Nested bracket LHS — one level of nesting (round-58 closure).
+holder[keys[0]] = localStorage;
+state[getKey(parts[0])] = window.localStorage;
+this[`prefix-${parts[0]}`] = globalThis.localStorage;
 ```

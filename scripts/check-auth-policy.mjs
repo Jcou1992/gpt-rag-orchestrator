@@ -148,15 +148,19 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-object-literal-value',
     why: 'R6a: assigning localStorage to an object-literal value (identifier, quoted-string, or computed key) is forbidden — the property holder bypasses every direct-access regex.',
   },
-  // ROUND-55 + ROUND-56 + ROUND-57: property assignment. LHS supports
-  // dot AND bracket access; bracket access accepts ANY expression (quoted
-  // string, computed identifier, template literal). Requires >=1 access
-  // step so it doesn't double-match the alias rule.
+  // ROUND-55 + ROUND-56 + ROUND-57 + ROUND-58: property assignment.
+  // LHS supports dot AND bracket access; bracket content allows up to
+  // ONE level of nested brackets (closes round-58: `holder[keys[0]] =
+  // localStorage`). Balanced-bracket regex: `\[(?:[^\[\]]|\[[^\]]*\])+\]`
+  // matches a bracket whose content is either non-bracket chars OR a
+  // single nested `[...]` with no further nesting. Two-or-more levels
+  // of nesting still bypass — backlog candidate is the AST refactor
+  // Codex has now requested in rounds 53/56/58.
   {
     multiline: true,
-    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
+    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[(?:[^\[\]]|\[[^\]]*\])+\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
     label: 'localStorage-property-assign',
-    why: 'R6a: assigning localStorage to an object/class property (`this.storage`, `holder.ls`, `holder["ls"]`, `holder[keyName]`, `this[storageKey]`) is forbidden — the property-bound binding bypasses every direct-access regex.',
+    why: 'R6a: assigning localStorage to an object/class property (`this.storage`, `holder.ls`, `holder["ls"]`, `holder[keyName]`, `holder[keys[0]]`, `this[`tpl-${x}`]`) is forbidden — the property-bound binding bypasses every direct-access regex.',
   },
   // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
   // global object. `const { localStorage: storage } = window;` then
