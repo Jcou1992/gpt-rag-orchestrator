@@ -126,16 +126,25 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-destructure',
     why: 'R6a: destructuring localStorage methods into local bindings (bare, dot-qualified, or optional-chained globals) is the same anti-pattern as direct .setItem/.getItem use.',
   },
-  // ROUND-51: destructuring `localStorage` itself OUT OF a global object.
-  // `const { localStorage: storage } = window;` then `storage.jwt = token`
-  // — the destructured binding bypasses every `localStorage`-anchored
-  // regex above. Match the shape: a brace-block on the LHS containing
-  // `localStorage` (with or without alias), assigned from window/
-  // globalThis/self.
+  // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
+  // global object. `const { localStorage: storage } = window;` then
+  // `storage.jwt = token` — the destructured binding bypasses every
+  // `localStorage`-anchored regex above. Match the shape: a brace-block
+  // on the LHS containing `localStorage` (with or without alias),
+  // assigned from window/globalThis/self.
+  //
+  // ROUND-52: tagged `multiline: true` so the whole-file scan path
+  // applies the regex; `[^}]*` already crosses newlines (negated class
+  // includes `\n`), so the same regex handles formatted multi-line
+  // destructuring like:
+  //   const {
+  //     localStorage: storage,
+  //   } = window;
   {
-    regex: /\b(?:const|let|var)\s*\{[^}]*\blocalStorage\b[^}]*\}\s*=\s*(?:window|globalThis|self)\b/,
+    multiline: true,
+    regex: /\b(?:const|let|var)\s*\{[^}]*\blocalStorage\b[^}]*\}\s*=\s*(?:window|globalThis|self)\b/g,
     label: 'localStorage-global-destructure',
-    why: 'R6a: destructuring `localStorage` out of `window`/`globalThis`/`self` is forbidden — the resulting binding bypasses every direct-access regex.',
+    why: 'R6a: destructuring `localStorage` out of `window`/`globalThis`/`self` (single- or multi-line formatted) is forbidden — the resulting binding bypasses every direct-access regex.',
   },
   // String-keyed indirection: `globalThis['localStorage'].setItem(...)`,
   // `window['localStorage']`, etc. Catches the literal string in any

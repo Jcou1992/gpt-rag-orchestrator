@@ -141,4 +141,14 @@ window.localStorage.access_token = result.accessToken;
 const { localStorage: storage1 } = window;
 const { localStorage } = globalThis;
 let { localStorage: ls3 } = self;
+
+// Multi-line global destructure (round-52 closure).
+const {
+  localStorage: storageMl1,
+} = window;
+
+let {
+  localStorage: storageMl2,
+  navigator,
+} = globalThis;
 ```
