@@ -98,9 +98,11 @@ const FORBIDDEN_REGEX = [
     why: 'R6a: tokens MUST NOT be persisted in localStorage. ANY localStorage API access (including optional-chained `?.`) in a scaffolded auth/api surface is forbidden by default; allow-anchor explicitly if non-token use is unavoidable.',
   },
   // Bracket-access form covers `localStorage['jwt']` / `localStorage["x"]`
-  // and the optional-chained variant `localStorage?.['x']`.
+  // and the optional-chained variant `localStorage?.['x']`. ROUND-49 fix:
+  // JS optional bracket syntax is `?.[expr]` (the dot between `?` and `[`
+  // is required); the prior `\??\s*\[` pattern matched `?[` only.
   {
-    regex: /\blocalStorage\s*\??\s*\[\s*['"]/,
+    regex: /\blocalStorage\s*(?:\?\.\s*)?\[\s*['"]/,
     label: 'localStorage-bracket-access',
     why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access (including optional-chained `?.[...]`) is the same anti-pattern as setItem/getItem.',
   },

@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 68,                 // 63 (round-47) + 5 round-48 optional-chained variants
+    expectedViolations: 69,                 // 68 (iter-48) + 1 round-49 fix: localStorage?.['jwt'] now actually flagged (was silently missed by malformed bracket regex)
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
