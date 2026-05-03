@@ -213,4 +213,10 @@ this[deeply.nested.path[a[b[c[d[0]]]]]] = globalThis.localStorage;
 holder.tokenStore = (localStorage);
 holder.tokenStore = (window.localStorage);
 this.cache = ((globalThis.localStorage));
+
+// Whitespace + multi-line nested parens (round-62 closure).
+holder.tokenStore = ( (localStorage) );
+holder.tokenStore = (
+  (window.localStorage)
+);
 ```
