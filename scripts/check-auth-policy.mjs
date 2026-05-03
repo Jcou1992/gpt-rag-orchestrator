@@ -86,25 +86,28 @@ const FORBIDDEN_REGEX = [
     label: 'RAG_API_URL',
     why: 'env var must be VITE_RAG_API_URL — Vite exposes only VITE_-prefixed names to the bundle',
   },
-  // localStorage API access — round-45 closure, round-48 extends to
-  // optional-chained method invocation (`localStorage?.setItem(...)`).
-  // R6a forbids ANY token persistence in localStorage. Method-call form
-  // covers setItem / getItem / removeItem / clear / key / length API
-  // surface. Any legitimate use (e.g., a debug flag) needs an explicit
-  // allow-anchor.
+  // localStorage ANY-property access — round-50 broadening.
+  // Old shape matched only method names (setItem|getItem|...) but missed
+  // arbitrary dot-properties like `localStorage.jwt = token` and
+  // `localStorage.access_token = result.accessToken`. R6a is "no
+  // localStorage access at all"; the regex now matches any dot- or
+  // optional-chain-followed identifier. The DEBUG-flag allowlist
+  // exception still works because allowlist excerpt matching is the
+  // load-bearing precision filter.
   {
-    regex: /\blocalStorage\s*\??\s*\.\s*(setItem|getItem|removeItem|clear|key|length)\b/,
+    regex: /\blocalStorage\s*(?:\?\.|\.)\s*[A-Za-z_$][\w$]*/,
     label: 'localStorage-api-call',
-    why: 'R6a: tokens MUST NOT be persisted in localStorage. ANY localStorage API access (including optional-chained `?.`) in a scaffolded auth/api surface is forbidden by default; allow-anchor explicitly if non-token use is unavoidable.',
+    why: 'R6a: tokens MUST NOT be persisted in localStorage. ANY localStorage property access (method, arbitrary dot-property, optional-chained) in a scaffolded auth/api surface is forbidden by default; allow-anchor explicitly if non-token use is unavoidable.',
   },
-  // Bracket-access form covers `localStorage['jwt']` / `localStorage["x"]`
-  // and the optional-chained variant `localStorage?.['x']`. ROUND-49 fix:
-  // JS optional bracket syntax is `?.[expr]` (the dot between `?` and `[`
-  // is required); the prior `\??\s*\[` pattern matched `?[` only.
+  // Bracket-access form — round-50 broadening. Old regex required a
+  // quoted key (`['x']`), missing `localStorage[JWT_KEY] = token`. New
+  // shape accepts ANY non-whitespace token inside the brackets so
+  // dynamic-key writes are flagged. Optional-chained `?.[expr]` also
+  // covered.
   {
-    regex: /\blocalStorage\s*(?:\?\.\s*)?\[\s*['"]/,
+    regex: /\blocalStorage\s*(?:\?\.\s*)?\[\s*\S/,
     label: 'localStorage-bracket-access',
-    why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access (including optional-chained `?.[...]`) is the same anti-pattern as setItem/getItem.',
+    why: 'R6a: tokens MUST NOT be persisted in localStorage; bracket access (quoted, dynamic-key, or optional-chained `?.[...]`) is the same anti-pattern as setItem/getItem.',
   },
   // ROUND-46/47/48 indirection closures.
   // Aliasing: `const ls = localStorage; ls.setItem('jwt', token);`. Direct

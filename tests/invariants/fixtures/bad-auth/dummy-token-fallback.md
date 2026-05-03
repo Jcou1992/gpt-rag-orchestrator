@@ -131,4 +131,9 @@ localStorage?.['jwt'] = token;
 const wls2 = window?.localStorage;
 const gls2 = globalThis?.localStorage;
 const { setItem: si2 } = window?.localStorage;
+
+// Dynamic-key + arbitrary dot-property writes (round-50 closure).
+localStorage[JWT_KEY] = token;
+localStorage.jwt = token;
+window.localStorage.access_token = result.accessToken;
 ```
