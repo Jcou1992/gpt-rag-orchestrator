@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 89,                 // 84 (round-54) + 5 round-55 (2 object-literal + 3 property-assign)
+    expectedViolations: 95,                 // 89 (round-55) + 6 round-56 (3 quoted/computed obj-literal + 3 bracket property-assign)
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',

@@ -180,4 +180,12 @@ const wrapper = { storage: window.localStorage };
 holder.ls = localStorage;
 this.storage = localStorage;
 state.localCache = globalThis.localStorage;
+
+// Quoted / computed / bracket alias forms (round-56 closure).
+const qHolder = { 'ls': localStorage };
+const dqHolder = { "ls": localStorage };
+const cHolder = { [keyName]: localStorage };
+holder['ls'] = localStorage;
+this['storage'] = localStorage;
+state["cache"] = window.localStorage;
 ```

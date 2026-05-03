@@ -135,25 +135,28 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-destructure',
     why: 'R6a: destructuring localStorage methods into local bindings (bare, dot-qualified, optional-chained, or multi-line formatted globals) is the same anti-pattern as direct .setItem/.getItem use.',
   },
-  // ROUND-55: object-literal value alias. `const holder = { ls:
-  // localStorage }; holder.ls.setItem(...)` — the property-bound
-  // binding loses the `localStorage` token. Match `: localStorage`
-  // inside an object literal.
+  // ROUND-55 + ROUND-56: object-literal value alias. Matches:
+  //   identifier key:    `{ ls: localStorage }`
+  //   quoted-string key: `{ 'ls': localStorage }` / `{ "ls": ... }`
+  //   computed key:      `{ [keyName]: localStorage }`
+  // Each key shape is followed by `: localStorage` (optionally global-
+  // qualified). The `[{,]` prefix anchors at the start of an object
+  // literal entry.
   {
     multiline: true,
-    regex: /[{,]\s*[A-Za-z_$][\w$]*\s*:\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
+    regex: /[{,]\s*(?:[A-Za-z_$][\w$]*|'[^']*'|"[^"]*"|\[[^\]]*\])\s*:\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
     label: 'localStorage-object-literal-value',
-    why: 'R6a: assigning localStorage to an object-literal value is forbidden — the property holder bypasses every direct-access regex.',
+    why: 'R6a: assigning localStorage to an object-literal value (identifier, quoted-string, or computed key) is forbidden — the property holder bypasses every direct-access regex.',
   },
-  // ROUND-55: property assignment `foo.bar = localStorage` /
-  // `this.storage = localStorage`. LHS pattern requires AT LEAST ONE
-  // dot so it doesn't double-match the alias rule (which already
-  // covers `const ls = localStorage`).
+  // ROUND-55 + ROUND-56: property assignment. LHS supports both dot and
+  // bracket access; requires AT LEAST ONE access step so it doesn't
+  // double-match the alias rule (which covers `const ls = localStorage`).
+  // Each access step is `.ident` OR `['key']` OR `["key"]`.
   {
     multiline: true,
-    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
+    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\s*['"][^'"]*['"]\s*\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
     label: 'localStorage-property-assign',
-    why: 'R6a: assigning localStorage to an object/class property (e.g. `this.storage = localStorage`, `holder.ls = localStorage`) is forbidden — the property-bound binding bypasses every direct-access regex.',
+    why: 'R6a: assigning localStorage to an object/class property (`this.storage`, `holder.ls`, `holder["ls"]`, `this[\'storage\']`) is forbidden — the property-bound binding bypasses every direct-access regex.',
   },
   // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
   // global object. `const { localStorage: storage } = window;` then
