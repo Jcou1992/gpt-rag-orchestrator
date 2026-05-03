@@ -198,4 +198,9 @@ state[`prefix-${suffix}`] = globalThis.localStorage;
 holder[keys[0]] = localStorage;
 state[getKey(parts[0])] = window.localStorage;
 this[`prefix-${parts[0]}`] = globalThis.localStorage;
+
+// Two-level nested bracket LHS (round-59 closure).
+holder[keys[parts[0]]] = localStorage;
+state[getKey(parts[idx[0]])] = window.localStorage;
+this[`prefix-${parts[idx[0]]}`] = globalThis.localStorage;
 ```

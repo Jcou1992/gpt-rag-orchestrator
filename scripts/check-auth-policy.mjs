@@ -148,19 +148,18 @@ const FORBIDDEN_REGEX = [
     label: 'localStorage-object-literal-value',
     why: 'R6a: assigning localStorage to an object-literal value (identifier, quoted-string, or computed key) is forbidden — the property holder bypasses every direct-access regex.',
   },
-  // ROUND-55 + ROUND-56 + ROUND-57 + ROUND-58: property assignment.
-  // LHS supports dot AND bracket access; bracket content allows up to
-  // ONE level of nested brackets (closes round-58: `holder[keys[0]] =
-  // localStorage`). Balanced-bracket regex: `\[(?:[^\[\]]|\[[^\]]*\])+\]`
-  // matches a bracket whose content is either non-bracket chars OR a
-  // single nested `[...]` with no further nesting. Two-or-more levels
-  // of nesting still bypass — backlog candidate is the AST refactor
-  // Codex has now requested in rounds 53/56/58.
+  // ROUND-55 → ROUND-59: property assignment. LHS supports dot AND
+  // bracket access; bracket content allows up to TWO levels of nested
+  // brackets (closes round-59: `holder[keys[parts[0]]] = localStorage`).
+  // Each `[...]` step is matched with two layers of recursion baked in;
+  // 3+ levels still bypass — Codex (rounds 53/56/58/59) has explicitly
+  // recommended switching to an AST scanner. v4.1 backlog item; for
+  // now incremental regex hardening keeps the loop progressing.
   {
     multiline: true,
-    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[(?:[^\[\]]|\[[^\]]*\])+\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
+    regex: /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[(?:[^\[\]]|\[(?:[^\[\]]|\[[^\]]*\])*\])+\])+\s*=\s*(?:(?:window|globalThis|self)\s*\??\s*\.\s*)?localStorage\b/g,
     label: 'localStorage-property-assign',
-    why: 'R6a: assigning localStorage to an object/class property (`this.storage`, `holder.ls`, `holder["ls"]`, `holder[keyName]`, `holder[keys[0]]`, `this[`tpl-${x}`]`) is forbidden — the property-bound binding bypasses every direct-access regex.',
+    why: 'R6a: assigning localStorage to an object/class property (incl. nested-bracket computed keys up to two levels deep, e.g. `holder[keys[parts[0]]] = localStorage`) is forbidden — the property-bound binding bypasses every direct-access regex.',
   },
   // ROUND-51 + ROUND-52: destructuring `localStorage` itself OUT OF a
   // global object. `const { localStorage: storage } = window;` then
