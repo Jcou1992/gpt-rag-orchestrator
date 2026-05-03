@@ -87,7 +87,7 @@ const cases = [
     // Set during the harness build-out; re-confirmed after every rule
     // change. Maintains the same property: removing a rule drops the
     // count and the harness fails.
-    expectedViolations: 37,                 // 34 (round-36) + 3 round-37 comment-stripping lines
+    expectedViolations: 43,                 // 37 (round-37) + 6 round-44 localStorage-JWT phrase matches across 4 fixture lines
     sentinels: [
       'STUB-JWT',
       'auth-stub-token',
@@ -106,6 +106,10 @@ const cases = [
       'catch-and-substitute',     // structural regex label — proves the
                                    // round-33 non-literal substitute rule fires
       'catch-fn-substitute',      // round-35 function-expression handler rule
+      'localStorage-backed JWT',  // round-44 localStorage-JWT phrase rule
+      'stub JWT in localStorage', // round-44 alternate phrasing
+      'JWT in localStorage',      // round-44 generic
+      'token in localStorage',    // round-44 token variant
     ],
   },
 ];

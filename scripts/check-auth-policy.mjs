@@ -67,6 +67,16 @@ const FORBIDDEN = [
   // unique full identifier (no parent name embeds it).
   { pattern: 'VITE_MSAL_TENANT_ID',                 why: 'obsolete env-var name; validator does NOT look it up — use VITE_MSAL_AUTHORITY instead' },
   { pattern: 'VITE_MSAL_API_SCOPE',                 why: 'obsolete env-var name; validator does NOT look it up — use VITE_API_SCOPE instead' },
+  // localStorage-backed JWT phrases — round-44 closure. Round 43 expanded
+  // the scan to guides AFTER the v3 phrases were rewritten, but the rule
+  // list never matched the actual phrases. A future contributor could
+  // re-introduce the same wording with CI green. These exact substrings
+  // are flagged as a defense-in-depth complement to the structural rules
+  // above.
+  { pattern: 'localStorage-backed JWT',             why: 'R6a: dev stub token MUST be module-scoped, never persisted to localStorage (XSS / extension exfil resistance)' },
+  { pattern: 'stub JWT in localStorage',            why: 'R6a: dev stub token MUST be module-scoped, never persisted to localStorage' },
+  { pattern: 'JWT in localStorage',                 why: 'R6a: tokens MUST NOT be persisted in localStorage — module-scoped dev stub only' },
+  { pattern: 'token in localStorage',               why: 'R6a: tokens MUST NOT be persisted in localStorage — module-scoped dev stub only' },
 ];
 
 // Word-boundary / structural regex rules.

@@ -74,3 +74,14 @@ RAG_API_URL=http://localhost:8080
 VITE_MSAL_TENANT_ID=<tenant-id>
 VITE_MSAL_API_SCOPE=<scope>
 ```
+
+## Forbidden localStorage-backed JWT phrases (round-44)
+
+The hardened R6a posture forbids any persistent token store. These exact
+phrasings are the v3 wording the auth-policy invariant rule list now
+matches verbatim:
+
+- Frontend auth fallback (stub JWT in localStorage).
+- Auth fallback uses a localStorage-backed JWT when MSAL fails.
+- The dev stub stores the JWT in localStorage so reloads keep the user signed in.
+- Persist the token in localStorage as a fallback.
