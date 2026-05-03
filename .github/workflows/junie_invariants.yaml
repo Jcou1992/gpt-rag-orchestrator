@@ -17,6 +17,8 @@ name: Junie skill invariants
 # as PR check failures and pushes to playbookGeneration / main / release.
 
 on:
+  # `.junie/**` already covers `.junie/guides/**` and `.junie/playbooks/**`
+  # — the auth-policy invariant scans both since round 43.
   pull_request:
     paths:
       - '.junie/**'

@@ -27,14 +27,20 @@ import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-// Target dir override (see check-r5-invariant.mjs for rationale —
-// the harness in `tests/invariants/` exercises the script against
-// fixtures and asserts non-zero exit).
-const TARGET_DIRS = [
-  process.env.JUNIE_PLAYBOOKS_DIR
-    ? resolve(process.env.JUNIE_PLAYBOOKS_DIR)
-    : join(REPO_ROOT, '.junie/playbooks'),
-];
+// Target dirs. Auth-policy invariant covers playbooks AND guides
+// (round-43 closure: `.junie/guides/REFACTORING_SUMMARY.md` carried
+// stale "stub JWT in localStorage" wording that contradicted the
+// hardened auth invariant; the playbook-only scan never caught it).
+//
+// Override env var (`JUNIE_PLAYBOOKS_DIR`) replaces both — the harness
+// in `tests/invariants/` points at a fixture dir to exercise the script
+// against known-bad inputs and asserts non-zero exit.
+const TARGET_DIRS = process.env.JUNIE_PLAYBOOKS_DIR
+  ? [resolve(process.env.JUNIE_PLAYBOOKS_DIR)]
+  : [
+      join(REPO_ROOT, '.junie/playbooks'),
+      join(REPO_ROOT, '.junie/guides'),
+    ];
 
 // Substring-matched forbidden tokens. Each rule: { pattern, why }.
 // Matched substring-style on every line inside JS / TS fenced blocks AND

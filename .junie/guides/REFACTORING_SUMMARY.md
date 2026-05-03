@@ -144,8 +144,8 @@ Analyzed the existing monolithic Junie skill (`create-rag-app.md`) and refactore
 **What it does:**
 1. Generates JSON-schema contracts for SSE events (Chunk, Citation, Done, Error)
 2. Generates cross-layer tests (frontend Vitest, backend JUnit) validating compliance
-3. Sets up mock orchestrator (Spring `@ConditionalOnProperty("orchestrator.mock-enabled")`)
-4. Sets up frontend auth fallback (stub JWT in localStorage)
+3. Sets up mock orchestrator (Spring `@DevOnlyBean` gated on `app.dev-doubles.enabled=true`; the `mock` profile is the only activator — see playbook 04 Step 3)
+4. Sets up frontend auth boundary: dev-only `auth-stub.js` resolved by a Vite alias when `mode in ['development', 'test']` and module-scoped (NOT `localStorage`); production `auth.js` delegates to MSAL's hardened `getToken` and throws on failure. R8 forbids any catch-and-substitute fallback.
 5. Generates `docs/communication-fallbacks.md`:
    - Offline dev (how to run without orchestrator)
    - CORS failures (how to debug)
@@ -325,7 +325,7 @@ Test templates provided (Vitest + @vue/test-utils for frontend, JUnit 5 + MockK 
 - Developers can work offline, no network needed
 
 **Fallbacks:**
-- Frontend auth stub (localStorage-backed JWT if MSAL fails)
+- Frontend dev auth: `auth-stub.js` resolved by Vite alias only in `development`/`test` modes; the stub token is module-scoped (NOT persisted to `localStorage`) and bears the leak-test sentinel. Production `auth.js` delegates to MSAL and THROWS on failure (R8); no catch-and-substitute path.
 - Testcontainers (if opted in) spin up real PostgreSQL for integration tests
 - All documented with runnable examples
 
