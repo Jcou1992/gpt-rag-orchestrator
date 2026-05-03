@@ -296,7 +296,7 @@ data class UserContext(
     /** Preferred username (preferred_username / upn claim). May be null in some token types. */
     val preferredUsername: String? = null,
     /**
-     * Free-form attribute bag — e.g., {"department": "ventas"} per INTEGRATION_PLAN §3.1.
+     * Free-form attribute bag — e.g., {"department": "sales"} per INTEGRATION_PLAN §3.1.
      * Populated SERVER-SIDE only (e.g., from Graph API enrichment or a configured
      * claim mapping). Never copied from the request body. If your integration plan
      * requires browser-supplied attributes (theme/locale, etc.), put those on a

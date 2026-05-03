@@ -1,6 +1,6 @@
 [
   { "type": "conversationId", "value": "c-123" },
-  { "type": "chunk", "text": "La política de devoluciones..." },
+  { "type": "chunk", "text": "The refund policy applies within 30 days of purchase..." },
   { "type": "citation", "title": "Manual v2", "url": "https://example.com/manual-v2" },
   { "type": "done" },
   { "type": "error", "code": "UPSTREAM_TIMEOUT", "message": "Upstream orchestrator timed out after 30s." }

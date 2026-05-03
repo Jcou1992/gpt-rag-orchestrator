@@ -1,24 +1,24 @@
-# GPT-RAG Orchestrator — Plan de Integración con Vue 3 + Spring Boot
+# GPT-RAG Orchestrator — Integration Plan with Vue 3 + Spring Boot
 
-> **Stack objetivo:** Vue 3 + Vuetify + Vite · Kotlin + Spring Boot · Azure
-> **Frontend language:** JavaScript por defecto (alineado con `.junie/guidelines.md` y la base actual del equipo). TypeScript queda como variante opt-in en `01-preflight`; los snippets `.ts` de §4 más abajo son la forma TS equivalente y deben leerse como `.js` cuando se mantiene el default.
-> **Objetivo:** Embeber el orchestrator en una webapp propia y evolucionar hacia ejecución agentic.
+> **Target stack:** Vue 3 + Vuetify + Vite · Kotlin + Spring Boot · Azure
+> **Frontend language:** JavaScript by default (aligned with `.junie/guidelines.md` and the team's current baseline). TypeScript is the opt-in variant in `01-preflight`; the `.ts` snippets in §4 below are the TS-equivalent shape and must be read as `.js` when the default is kept.
+> **Goal:** Embed the orchestrator inside an in-house web app and evolve toward agentic execution.
 
 ---
 
 ## 0. TL;DR
 
-El GPT-RAG Orchestrator es una app **Python 3.12 + FastAPI** desplegada en Azure Container Apps, con un único endpoint `POST /orchestrator` que devuelve **SSE**. Internamente usa Azure AI Foundry Agent Service v2, AI Search (híbrida), Cosmos DB (conversaciones) y Blob Storage (documentos/prompts).
+The GPT-RAG Orchestrator is a **Python 3.12 + FastAPI** app deployed on Azure Container Apps with a single endpoint `POST /orchestrator` that returns **SSE**. Internally it uses Azure AI Foundry Agent Service v2, AI Search (hybrid), Cosmos DB (conversations) and Blob Storage (documents/prompts).
 
-**Sí se puede embeber**, pero **NO consumirlo directo desde Vue**. Lo correcto es un **proxy en Spring Boot** que:
-- Valida el JWT de Entra ID del usuario.
-- Normaliza el stream SSE de texto plano a JSON estructurado.
-- Expone una API limpia a Vue.
-- Actúa como MCP server / backend de tools para la parte agentic.
+**Embedding it is supported**, but **NOT by consuming it directly from Vue**. The right shape is a **Spring Boot proxy** that:
+- Validates the user's Entra ID JWT.
+- Normalises the plain-text SSE stream into structured JSON events.
+- Exposes a clean API to Vue.
+- Acts as MCP server / tool backend for the agentic side.
 
 ---
 
-## 1. Arquitectura
+## 1. Architecture
 
 ```mermaid
 flowchart LR
@@ -71,64 +71,64 @@ flowchart LR
 
 ---
 
-## 2. Análisis del orchestrator actual
+## 2. Analysis of the current orchestrator
 
-### 2.1 Entry point y deployment
-- **Framework:** FastAPI + Uvicorn (Python 3.12), puerto 8080.
+### 2.1 Entry point and deployment
+- **Framework:** FastAPI + Uvicorn (Python 3.12), port 8080.
 - **Entry point:** `src/main.py`.
-- **Deployment:** Docker → Azure Container Apps vía `azd`.
-- **Config:** Azure App Configuration (primario) + env vars (fallback).
+- **Deployment:** Docker → Azure Container Apps via `azd`.
+- **Config:** Azure App Configuration (primary) + env vars (fallback).
 
-### 2.2 Endpoint expuesto
-**`POST /orchestrator`** — único endpoint funcional, definido en `src/main.py:257-515`.
+### 2.2 Exposed endpoint
+**`POST /orchestrator`** — the only functional endpoint, defined at `src/main.py:257-515`.
 
-- **Content-Type respuesta:** `text/event-stream` (SSE).
-- **OpenAPI:** disponible en `/docs` y `/openapi.json`.
-- **Streaming:** sí, chunks de texto crudo con citas en Markdown inline `[title](url)`.
+- **Response Content-Type:** `text/event-stream` (SSE).
+- **OpenAPI:** available at `/docs` and `/openapi.json`.
+- **Streaming:** yes — raw text chunks with citations as inline Markdown `[title](url)`.
 
-### 2.3 Autenticación (dos capas)
+### 2.3 Authentication (two layers)
 
 **API-level** (`src/dependencies.py:162-227`):
-- Header `dapr-api-token` o `X-API-KEY`.
-- Validado contra env vars `APP_API_TOKEN`, `DAPR_API_TOKEN` o `dev-token` (hardcoded).
-- Se salta con `DISABLE_AUTH=true`.
+- `dapr-api-token` or `X-API-KEY` header.
+- Validated against env vars `APP_API_TOKEN`, `DAPR_API_TOKEN`, or the hardcoded `dev-token`.
+- Bypassed when `DISABLE_AUTH=true`.
 
 **User-level** (`src/dependencies.py:301-688`):
 - `Authorization: Bearer <entra-id-jwt>`.
-- Validación JWT con JWKS de Azure AD (v1/v2), cacheado.
-- Extrae `oid`, `preferred_username`, `name`.
-- Opcional: enrichment con Graph API si hay `OAUTH_AZURE_AD_CLIENT_SECRET`.
-- Allow-list vía `ALLOWED_USER_NAMES` / `ALLOWED_USER_PRINCIPALS`.
+- JWT validation against the cached Azure AD JWKS (v1/v2).
+- Extracts `oid`, `preferred_username`, `name`.
+- Optional Graph API enrichment when `OAUTH_AZURE_AD_CLIENT_SECRET` is set.
+- Allow-list via `ALLOWED_USER_NAMES` / `ALLOWED_USER_PRINCIPALS`.
 
-### 2.4 Flujo de datos (query → respuesta)
+### 2.4 Data flow (query → response)
 
-1. Request entra al **orchestrator (FastAPI)** con `ask`, `conversation_id` opcional, y `user_context` (este último lo construye Spring desde el JWT autenticado en el paso 0; ver §3.1: el browser nunca lo envía).
-2. Factory selecciona strategy según `AGENT_STRATEGY` (default: `single_agent_rag`).
-3. **Embeddings:** modelo `EMBEDDING_DEPLOYMENT_NAME` (ej. `text-embedding-3-large`, 3072 dims).
-4. **Retrieval (AI Search):** índice `SEARCH_RAG_INDEX_NAME`, approach `hybrid|vector|term`, top-K configurable, semantic ranking opcional.
-5. **Generación:** Azure AI Foundry Agent Service v2 con tools (`search_knowledge_base`, opcional `bing_grounding`). Si el índice está vacío, hace bypass a Azure OpenAI directo (optimización de latencia).
-6. **Citas:** convierte placeholders tipo `【3:0†source】` a Markdown `[title](url)`.
-7. **Persistencia:** conversación en Cosmos DB (async upsert post-stream).
-8. **Response:** SSE chunk a chunk vía `StreamingResponse`.
+1. Request arrives at the **orchestrator (FastAPI)** with `ask`, optional `conversation_id`, and `user_context` (Spring builds the last one from the authenticated JWT in step 0; see §3.1: the browser never sends it).
+2. Factory selects a strategy from `AGENT_STRATEGY` (default: `single_agent_rag`).
+3. **Embeddings:** model `EMBEDDING_DEPLOYMENT_NAME` (e.g. `text-embedding-3-large`, 3072 dims).
+4. **Retrieval (AI Search):** index `SEARCH_RAG_INDEX_NAME`, approach `hybrid|vector|term`, configurable top-K, optional semantic ranking.
+5. **Generation:** Azure AI Foundry Agent Service v2 with tools (`search_knowledge_base`, optional `bing_grounding`). When the index is empty it bypasses to direct Azure OpenAI calls (latency optimisation).
+6. **Citations:** placeholders like `【3:0†source】` are converted to Markdown `[title](url)`.
+7. **Persistence:** conversation upsert to Cosmos DB (async, after the stream).
+8. **Response:** SSE chunk-by-chunk via `StreamingResponse`.
 
-### 2.5 Strategies disponibles
+### 2.5 Available strategies
 - `single_agent_rag` (default) — Azure AI Foundry Agent Service v2.
 - `maf_agent_service` — Microsoft Agent Framework + Agent Service.
-- `maf_lite` — MAF directo contra Azure OpenAI.
-- `mcp` — Model Context Protocol vía Semantic Kernel (ya implementado).
-- `nl2sql` — multi-agent group chat para SQL.
+- `maf_lite` — MAF directly against Azure OpenAI.
+- `mcp` — Model Context Protocol via Semantic Kernel (already implemented).
+- `nl2sql` — multi-agent group chat for SQL.
 - `multimodal` — vision + text RAG.
 
-### 2.6 Clients reutilizables (singletons)
-- `IdentityManager` — credenciales AAD centralizadas.
+### 2.6 Reusable clients (singletons)
+- `IdentityManager` — centralised AAD credentials.
 - `GenAIModelClient` — embeddings + chat.
-- `SearchClient` — hybrid search con OBO.
-- `CosmosDBClient` — conversaciones.
-- `AppConfigClient` — config centralizada.
+- `SearchClient` — hybrid search with OBO.
+- `CosmosDBClient` — conversations.
+- `AppConfigClient` — centralised config.
 
 ---
 
-## 3. Contratos API
+## 3. API contracts
 
 ### 3.1 Frontend → Spring Boot
 
@@ -144,18 +144,18 @@ Content-Type: application/json
 Request:
 ```json
 {
-  "ask": "¿Cuál es la política de devoluciones?",
-  "conversationId": "uuid-opcional"
+  "ask": "What is the refund policy?",
+  "conversationId": "uuid-optional"
 }
 ```
 
 **Auth-boundary note.** `UserContext` (forwarded to the orchestrator on the OBO leg) is **server-derived** from the authenticated Entra ID JWT — `oid`, `preferred_username`, and any configured attribute mapping (e.g., `department` from a Graph enrichment step). The browser MUST NOT include a `userContext` field; Spring builds it via `UserContextBuilder` from the JWT in `ReactiveSecurityContextHolder`. Accepting client-supplied identity here would let the front-end override the OBO subject and forward an attacker-chosen `oid` downstream.
 
-Response SSE (JSON envelope normalizado por Spring):
+Response SSE (JSON envelope normalised by Spring):
 
 Examples: see [.junie/contracts/sse-events.examples.json](.junie/contracts/sse-events.examples.json) — each entry is a single SSE `data:` payload; the contract test (per `.junie/playbooks/04-contract-tests.md`) validates every example against the canonical schema at [.junie/contracts/sse-events.schema.json](.junie/contracts/sse-events.schema.json).
 
-The 5 event types are: `conversationId` (emitted at most once, before first chunk), `chunk` (zero or more streaming text fragments), `citation` (zero or more citations interleaved with chunks), `done` (terminator on success), `error` (terminator on failure, replaces `done`).
+The 5 event types are: `conversationId` (emitted at most once, before the first chunk), `chunk` (zero or more streaming text fragments), `citation` (zero or more citations interleaved with chunks), `done` (terminator on success), `error` (terminator on failure, replaces `done`).
 
 Do not restate event payloads inline in this file — the canonical schema and the sidecar fixture are the source of truth (R5/R10).
 
@@ -166,7 +166,7 @@ Do not restate event payloads inline in this file — the canonical schema and t
 Headers:
 ```
 X-API-KEY: <APP_API_TOKEN>
-Authorization: Bearer <user-token>   # passthrough para OBO
+Authorization: Bearer <user-token>   # passthrough for OBO
 Accept: text/event-stream
 ```
 
@@ -178,18 +178,18 @@ Request:
   "user_context": {
     "oid": "...",
     "upn": "...",
-    "department": "ventas"
+    "department": "sales"
   }
 }
 ```
 
-Response: SSE texto plano con citas Markdown inline.
+Response: plain-text SSE with inline Markdown citations.
 
-### 3.3 Tool endpoints (para agentic)
+### 3.3 Tool endpoints (for agentic mode)
 
-**`POST /api/tools/{toolName}`** — invocado por el orchestrator.
+**`POST /api/tools/{toolName}`** — invoked by the orchestrator.
 
-Ejemplo (`createTicket`):
+Example (`createTicket`):
 ```json
 // Request
 { "title": "...", "priority": "high", "userOid": "..." }
@@ -200,36 +200,36 @@ Ejemplo (`createTicket`):
 
 ---
 
-## 4. Estructura de proyectos
+## 4. Project structure
 
 ### 4.1 Backend (Kotlin + Spring Boot)
 
 ```
 backend/
 ├── build.gradle.kts
-├── src/main/kotlin/com/tuapp/rag/
+├── src/main/kotlin/com/example/rag/
 │   ├── RagApplication.kt
 │   ├── config/
 │   │   ├── SecurityConfig.kt           # JWT resource server + CORS
-│   │   ├── WebClientConfig.kt          # WebClient con timeouts SSE
+│   │   ├── WebClientConfig.kt          # WebClient with SSE timeouts
 │   │   └── OrchestratorProperties.kt   # @ConfigurationProperties
 │   ├── web/
 │   │   ├── RagController.kt            # POST /api/rag/ask (SSE)
-│   │   ├── ToolController.kt           # endpoints invocables como tools
+│   │   ├── ToolController.kt           # endpoints invokable as tools
 │   │   └── dto/
 │   │       ├── AskRequest.kt
 │   │       ├── AskChunk.kt             # sealed class: Chunk|Citation|Done|Error
 │   │       └── Citation.kt
 │   ├── service/
-│   │   ├── OrchestratorClient.kt       # WebClient reactivo
-│   │   ├── SseEnvelopeMapper.kt        # texto crudo → JSON events
+│   │   ├── OrchestratorClient.kt       # reactive WebClient
+│   │   ├── SseEnvelopeMapper.kt        # raw text → JSON events
 │   │   ├── UserContextBuilder.kt       # JWT claims → user_context
-│   │   └── ConversationService.kt      # cache/auditoría opcional
+│   │   └── ConversationService.kt      # optional cache/audit
 │   ├── tools/
-│   │   ├── ToolRegistry.kt             # registro en memoria
-│   │   ├── ToolDefinition.kt           # schema JSON (name, desc, params)
+│   │   ├── ToolRegistry.kt             # in-memory registry
+│   │   ├── ToolDefinition.kt           # JSON schema (name, desc, params)
 │   │   └── impl/                       # CreateTicketTool, ...
-│   └── mcp/                            # fase 4
+│   └── mcp/                            # phase 4
 │       ├── McpServer.kt                # SSE transport
 │       ├── McpMessageHandler.kt
 │       └── McpToolAdapter.kt
@@ -238,36 +238,36 @@ backend/
 
 ### 4.2 Frontend (Vue 3 + Vuetify + Vite)
 
-> El árbol de abajo muestra la variante **TypeScript** (opt-in). Para el default JavaScript, sustituye `.ts` por `.js` y elimina `src/types/rag.ts`. La estructura, los nombres de carpeta y la matriz de archivos no cambian entre variantes — solo la extensión y la presencia de tipos.
+> The tree below shows the **TypeScript** variant (opt-in). For the JavaScript default, replace `.ts` with `.js` and drop `src/types/rag.ts`. The structure, folder names, and file matrix are identical between variants — only the extension and the presence of types change.
 
 ```
 frontend/
 ├── package.json
-├── vite.config.{js,ts}                  # .js por default; .ts si se opta por TypeScript
+├── vite.config.{js,ts}                  # .js by default; .ts when TypeScript is opted in
 └── src/
     ├── components/rag/
-    │   ├── RagChat.vue                 # componente embebible
-    │   ├── RagMessage.vue              # burbuja markdown + citas
-    │   ├── RagCitation.vue             # chip con doc/link
+    │   ├── RagChat.vue                 # embeddable component
+    │   ├── RagMessage.vue              # markdown bubble + citations
+    │   ├── RagCitation.vue             # doc/link chip
     │   └── RagInput.vue
     ├── composables/
-    │   ├── useRagChat.{js,ts}          # estado + streaming
+    │   ├── useRagChat.{js,ts}          # state + streaming
     │   └── useSseClient.{js,ts}        # fetchEventSource wrapper
     ├── services/
-    │   ├── auth.{js,ts}                # adapter — delega a msalConfig.js
-    │   ├── auth-stub.{js,ts}           # dev-only stub (resuelve por alias en Vite)
-    │   └── ragApi.{js,ts}              # wrapper HTTP
+    │   ├── auth.{js,ts}                # adapter — delegates to msalConfig.js
+    │   ├── auth-stub.{js,ts}           # dev-only stub (resolved by Vite alias)
+    │   └── ragApi.{js,ts}              # HTTP wrapper
     ├── auth/
-    │   └── msalConfig.{js,ts}          # MSAL hardened (R11) — única fuente de getToken
+    │   └── msalConfig.{js,ts}          # MSAL hardened (R11) — single source of getToken
     ├── types/
-    │   └── rag.ts                      # solo en variante TypeScript
+    │   └── rag.ts                      # only in the TypeScript variant
     └── plugins/
         └── markdown.{js,ts}            # marked + highlight.js + DOMPurify
 ```
 
 ---
 
-## 5. Dependencias
+## 5. Dependencies
 
 ### 5.1 `build.gradle.kts`
 
@@ -284,7 +284,7 @@ dependencies {
     implementation("io.github.resilience4j:resilience4j-spring-boot3:2.2.0")
     // Azure
     implementation("com.azure:azure-identity:1.13.0")
-    // MCP (fase 4, opcional)
+    // MCP (phase 4, optional)
     implementation("io.modelcontextprotocol.sdk:mcp:0.8.0")
     implementation("io.modelcontextprotocol.sdk:mcp-spring-webflux:0.8.0")
 
@@ -322,109 +322,108 @@ dependencies {
 }
 ```
 
-> **TypeScript variant only** (opt-in en `01-preflight`): añade además `"typescript": "^5.6.0"` y `"vue-tsc": "^2.1.0"` a `devDependencies`. En el default JavaScript no van — los `.spec.js` y los snippets `.js` no los necesitan.
+> **TypeScript variant only** (opt-in in `01-preflight`): also add `"typescript": "^5.6.0"` and `"vue-tsc": "^2.1.0"` to `devDependencies`. The JavaScript default does not need them — `.spec.js` files and `.js` snippets do not require the TS toolchain.
 
-> **Notas:**
-> - `@microsoft/fetch-event-source` es imprescindible — el `EventSource` nativo no soporta headers custom y vas a necesitar `Authorization: Bearer`.
-> - `@azure/msal-browser` lo importa `src/auth/msalConfig.{js,ts}` (R11/SC6 hardened MSAL). Sin él el build se rompe con `Cannot find module '@azure/msal-browser'`.
-> - `@vitejs/plugin-vue` lo importa `vite.config.js` (`plugins: [vue()]`); sin él el dev server arranca pero ningún `.vue` compila.
-> - `vitest` + `ajv` + `ajv-formats` son los runners y validadores que `contract-tests/contract.spec.{js,ts}` y `contract-tests/leak.spec.{js,ts}` requieren (playbook 04 Pasos 2 y 5).
-> - `engines.node >= 20` queda como floor declarado para alinearse con Vite 5 (que pide Node ≥18 desde 5.0 y se beneficia de Node 20 LTS) y con Vitest 2. Los specs de playbook 04 son Node-18-safe (el leak-test usa un walker manual con `withFileTypes`), pero declarar el floor evita ambigüedades cuando un futuro spec se apoye en una API solo-Node-20+.
+> **Notes:**
+> - `@microsoft/fetch-event-source` is required — the native `EventSource` does not support custom headers, and `Authorization: Bearer` is needed.
+> - `@azure/msal-browser` is imported by `src/auth/msalConfig.{js,ts}` (R11/SC6 hardened MSAL). Without it the build fails with `Cannot find module '@azure/msal-browser'`.
+> - `@vitejs/plugin-vue` is imported by `vite.config.js` (`plugins: [vue()]`); without it the dev server starts but no `.vue` file compiles.
+> - `vitest` + `ajv` + `ajv-formats` are the runners and validators that `contract-tests/contract.spec.{js,ts}` and `contract-tests/leak.spec.{js,ts}` require (playbook 04 Steps 2 and 5).
+> - `engines.node >= 20` is the declared floor, aligned with Vite 5 (Node ≥18 since 5.0, Node 20 LTS preferred) and Vitest 2. The playbook 04 specs are Node-18-safe (the leak test uses a manual `withFileTypes` walker), but declaring the floor prevents ambiguity if a future spec relies on a Node-20-only API.
 
 ---
 
 ## 6. Direct Tool Calling vs MCP Server
 
-| Criterio | Tool Calling HTTP directo | MCP Server en Spring Boot |
+| Criterion | Direct HTTP tool calling | MCP Server in Spring Boot |
 |---|---|---|
-| **Esfuerzo inicial** | Bajo: REST endpoints + registro JSON | Medio-alto: protocolo MCP (SSE + JSON-RPC) |
-| **Acoplamiento** | Tools hardcodeadas en prompts/strategy | Descubrimiento dinámico vía `list_tools` |
-| **Strategy del orchestrator** | `single_agent_rag` con function tools custom (requiere modificar Python) | `mcp` strategy ya existe — solo config `MCP_APP_ENDPOINT` |
-| **Estándar** | Propietario | Estándar abierto (Anthropic/Microsoft) |
-| **Multi-cliente** | Solo el orchestrator | Reutilizable desde Claude Desktop, Copilot, otros agentes |
-| **Auth de tools** | Spring Security normal | Headers custom con identidad (patrón de `mcp_strategy.py`) |
-| **Streaming tool responses** | Nativo Spring | Soportado vía SSE transport |
-| **SDK JVM** | N/A (REST) | `io.modelcontextprotocol.sdk:mcp-spring-webflux` |
-| **Recomendación** | ✅ **Fase 1-3** | ✅ **Fase 4** (3+ tools o reutilización) |
+| **Initial effort** | Low: REST endpoints + JSON registry | Medium-high: MCP protocol (SSE + JSON-RPC) |
+| **Coupling** | Tools hardcoded into prompts/strategy | Dynamic discovery via `list_tools` |
+| **Orchestrator strategy** | `single_agent_rag` with custom function tools (requires modifying Python) | The `mcp` strategy already exists — only `MCP_APP_ENDPOINT` config is needed |
+| **Standard** | Proprietary | Open standard (Anthropic/Microsoft) |
+| **Multi-client** | Orchestrator only | Reusable from Claude Desktop, Copilot, other agents |
+| **Tool auth** | Standard Spring Security | Custom identity headers (pattern from `mcp_strategy.py`) |
+| **Streaming tool responses** | Native in Spring | Supported via SSE transport |
+| **JVM SDK** | N/A (REST) | `io.modelcontextprotocol.sdk:mcp-spring-webflux` |
+| **Recommendation** | ✅ **Phases 1–3** | ✅ **Phase 4** (3+ tools or cross-agent reuse) |
 
-**Veredicto:** empezar con tool calling HTTP directo registrando tools en `single_agent_rag_strategy_v2.py`. Migrar a MCP cuando el catálogo crezca o quieras reutilizar tools desde otros agentes.
+**Verdict:** start with direct HTTP tool calling, registering tools in `single_agent_rag_strategy_v2.py`. Migrate to MCP when the catalogue grows or you need to reuse tools from other agents.
 
 ---
 
-## 7. Gaps y bloqueantes en el orchestrator actual
+## 7. Gaps and blockers in the current orchestrator
 
-| # | Gap | Impacto | Mitigación |
+| # | Gap | Impact | Mitigation |
 |---|---|---|---|
-| 1 | Sin CORS middleware en FastAPI | Vue no puede llamar directo | Proxy Spring (recomendado) o añadir `CORSMiddleware` |
-| 2 | SSE sin JSON envelope — texto crudo con `[title](url)` inline | Parsing frágil en Vue | Normalizar en el proxy |
-| 3 | Error handling inconsistente (`event: error` vs 500) | Difícil manejar en Vue | Normalizar en el proxy |
-| 4 | Sin cancelación server-side | Coste innecesario en Azure OpenAI si el cliente aborta | Timeouts agresivos en WebClient |
-| 5 | No hay agentic loop real (single-shot retrieval+gen con function tools del SDK) | Para tools custom hay que extender la strategy | Registrar function tools o usar `mcp` strategy |
-| 6 | Auth API-level con tokens hardcoded | OK tras proxy, mal si se expone | **Nunca exponer el orchestrator a internet** |
-| 7 | Sin rate limiting | Riesgo de coste en Azure OpenAI | Bucket por `oid` en Spring |
-| 8 | OBO flow requiere app registration con permisos delegados | Config extra en Entra ID | Configurar "On-Behalf-Of" explícitamente |
-| 9 | Prompts en archivos — sin hot reload | Cambios requieren redeploy | `PROMPT_SOURCE=cosmos` |
-| 10 | Citas en Markdown inline mezcladas con texto | Difícil separar UI | Regex extraction en el proxy |
+| 1 | No CORS middleware in FastAPI | Vue cannot call directly | Spring proxy (recommended) or add `CORSMiddleware` |
+| 2 | SSE without JSON envelope — raw text with inline `[title](url)` | Fragile parsing in Vue | Normalise in the proxy |
+| 3 | Inconsistent error handling (`event: error` vs HTTP 500) | Hard to handle in Vue | Normalise in the proxy |
+| 4 | No server-side cancellation | Wasted spend on Azure OpenAI when the client aborts | Aggressive timeouts in WebClient |
+| 5 | No real agentic loop (single-shot retrieval+generation with SDK function tools) | Custom tools require extending the strategy | Register function tools or use the `mcp` strategy |
+| 6 | API-level auth uses hardcoded tokens | Acceptable behind a proxy, unsafe if exposed | **Never expose the orchestrator to the internet** |
+| 7 | No rate limiting | Cost risk on Azure OpenAI | Per-`oid` token bucket in Spring |
+| 8 | OBO flow needs an app registration with delegated permissions | Extra Entra ID configuration | Configure "On-Behalf-Of" explicitly |
+| 9 | Prompts in files — no hot reload | Changes require redeploy | `PROMPT_SOURCE=cosmos` |
+| 10 | Citations as inline Markdown mixed with text | Hard to separate in the UI | Regex extraction in the proxy |
 
 ---
 
-## 8. Secuencia de implementación
+## 8. Implementation sequence
 
-### Fase 1 — MVP embebido (1-2 semanas)
-1. Crear app registrations en Entra ID:
-   - SPA (Vue) con redirect URIs.
-   - API (Spring Boot) que expone scopes.
-   - Configurar flujo **On-Behalf-Of** para que Spring pueda pasar el token al orchestrator.
-2. Scaffold Spring Boot con `OrchestratorClient` (WebClient reactivo, `MediaType.TEXT_EVENT_STREAM`).
-3. Implementar `RagController` que proxya SSE, normalizando a JSON events (`chunk`, `citation`, `done`, `error`).
-4. Extraer citas inline `[title](url)` con regex en `SseEnvelopeMapper`.
-5. Crear `RagChat.vue` + `useRagChat` usando `@microsoft/fetch-event-source`, render Markdown con `marked` + `DOMPurify` + `highlight.js`.
-6. Validar en browser real: happy path, errores 401, timeout, desconexión, cancelación.
+### Phase 1 — Embedded MVP (1-2 weeks)
+1. Create app registrations in Entra ID:
+   - SPA (Vue) with redirect URIs.
+   - API (Spring Boot) exposing scopes.
+   - Configure the **On-Behalf-Of** flow so Spring can pass the user token to the orchestrator.
+2. Scaffold Spring Boot with `OrchestratorClient` (reactive WebClient, `MediaType.TEXT_EVENT_STREAM`).
+3. Implement `RagController` to proxy SSE, normalising it into JSON events (`chunk`, `citation`, `done`, `error`).
+4. Extract inline citations `[title](url)` with a regex in `SseEnvelopeMapper`.
+5. Build `RagChat.vue` + `useRagChat` using `@microsoft/fetch-event-source`, render Markdown with `marked` + `DOMPurify` + `highlight.js`.
+6. Validate end-to-end in a real browser: happy path, 401 errors, timeout, disconnect, cancellation.
 
-### Fase 2 — Hardening (1 semana)
-7. Rate limiting por `oid` (Bucket4j o Resilience4j).
-8. Logging estructurado + métricas (Actuator + App Insights exporter).
-9. Cancelación end-to-end: `AbortController` en Vue → cierre del subscription reactivo en Spring.
-10. Cache opcional de respuestas idénticas (Caffeine, TTL corto).
-11. Circuit breaker hacia el orchestrator (Resilience4j).
+### Phase 2 — Hardening (1 week)
+7. Per-`oid` rate limiting (Bucket4j or Resilience4j).
+8. Structured logging + metrics (Actuator + App Insights exporter).
+9. End-to-end cancellation: `AbortController` in Vue → cancel the reactive subscription in Spring.
+10. Optional cache for identical responses (Caffeine, short TTL).
+11. Circuit breaker towards the orchestrator (Resilience4j).
 
-### Fase 3 — Agentic con HTTP tools (2 semanas)
-12. Implementar `ToolController` con 1-2 tools reales del dominio (ej. `createTicket`, `getOrderStatus`).
-13. Definir `ToolDefinition` con schema JSON (nombre, descripción, parámetros).
-14. Fork/PR al orchestrator: registrar esas tools como function tools en `single_agent_rag_strategy_v2.py`, apuntando a Spring Boot.
-15. Auth entre orchestrator y Spring: shared secret en header o mTLS.
-16. Test end-to-end: el agente decide llamar la tool, Spring ejecuta, el agente sintetiza respuesta final.
+### Phase 3 — Agentic mode with HTTP tools (2 weeks)
+12. Implement `ToolController` with one or two real domain tools (e.g. `createTicket`, `getOrderStatus`).
+13. Define `ToolDefinition` with a JSON schema (name, description, parameters).
+14. Fork/PR the orchestrator: register those tools as function tools in `single_agent_rag_strategy_v2.py`, pointing at Spring Boot.
+15. Auth between the orchestrator and Spring: shared secret in a header or mTLS.
+16. End-to-end test: the agent decides to call the tool, Spring runs it, the agent synthesises the final answer.
 
-### Fase 4 — Migración a MCP (opcional, 1-2 semanas)
-17. Levantar MCP server en Spring con `mcp-spring-webflux`, exponiendo las mismas tools.
-18. Configurar `MCP_APP_ENDPOINT` apuntando a Spring y `AGENT_STRATEGY=mcp` en App Configuration.
-19. El orchestrator descubre tools dinámicamente — añadir tools nuevas ya no requiere tocar código Python.
-20. Propagar identidad del usuario a MCP server vía headers custom (patrón existente en `mcp_strategy.py`).
-
----
-
-## 9. Decisiones clave
-
-- **Proxy obligatorio:** no exponer el orchestrator directamente a Vue. Spring Boot es el único punto de entrada autorizado.
-- **WebFlux sobre MVC:** SSE end-to-end requiere streaming reactivo; `RestTemplate` no sirve.
-- **Token passthrough:** el JWT del usuario se propaga al orchestrator para que haga OBO hacia AI Search con la identidad del usuario (permite filtros de seguridad por documento).
-- **JSON envelope en proxy:** invertir en normalizar el SSE ahora ahorra dolor en el frontend más adelante.
-- **MCP diferido:** no sobre-ingeniar la fase 1. Tool calling HTTP cubre el 80% de casos con 20% del esfuerzo.
+### Phase 4 — MCP migration (optional, 1-2 weeks)
+17. Stand up an MCP server in Spring with `mcp-spring-webflux`, exposing the same tools.
+18. Set `MCP_APP_ENDPOINT` to the Spring server and `AGENT_STRATEGY=mcp` in App Configuration.
+19. The orchestrator now discovers tools dynamically — adding new tools no longer requires touching Python code.
+20. Propagate the user identity into the MCP server via custom headers (existing pattern in `mcp_strategy.py`).
 
 ---
 
-## 10. Referencias del código analizado
+## 9. Key decisions
+
+- **Proxy is mandatory:** never expose the orchestrator directly to Vue. Spring Boot is the only authorised entry point.
+- **WebFlux over MVC:** end-to-end SSE requires reactive streaming; `RestTemplate` does not work.
+- **Token passthrough:** the user JWT is forwarded to the orchestrator so it can OBO into AI Search with the user's identity (enables per-document security filters).
+- **JSON envelope in the proxy:** investing in normalising SSE now prevents frontend pain later.
+- **MCP deferred:** no over-engineering in phase 1. HTTP tool calling covers 80% of cases with 20% of the effort.
+
+---
+
+## 10. References to the analysed code
 
 - Entry point: `src/main.py:257-515`
-- Auth API-level: `src/dependencies.py:162-227`
-- Auth user-level: `src/dependencies.py:301-688`
+- API-level auth: `src/dependencies.py:162-227`
+- User-level auth: `src/dependencies.py:301-688`
 - SSE generator: `src/main.py:503-515`
-- Factory de strategies: `src/strategies/agent_strategy_factory.py`
-- Strategy default: `src/strategies/single_agent_rag_strategy_v2.py`
-- Strategy MCP: `src/strategies/mcp_strategy.py`
+- Strategy factory: `src/strategies/agent_strategy_factory.py`
+- Default strategy: `src/strategies/single_agent_rag_strategy_v2.py`
+- MCP strategy: `src/strategies/mcp_strategy.py`
 - Search client: `src/connectors/search.py`
 - GenAI client: `src/connectors/aifoundry.py`
 - Config loader: `src/connectors/appconfig.py`
 - Citations: `src/util/citations.py`
-- Prompt default: `src/prompts/single_agent_rag/main.jinja2`
-- Sample env: `.env.sample`
+- Default prompt: `src/prompts/single_agent_rag/main.jinja2`

@@ -313,16 +313,16 @@ export async function getToken() {
 ```javascript
 import { getToken } from '@/services/auth';
 
-// LOAD-BEARING: build the endpoint from VITE_RAG_API_URL (validated at
-// startup by msalConfig.js's placeholder check) — NEVER use a relative
-// `/api/rag/ask` path. In a typical Vite SPA the frontend and backend
-// are served from different origins, so a relative URL would hit the
-// frontend's static host (404) instead of the orchestrator backend.
-// `new URL(path, base)` produces an absolute URL when base is set and
-// throws synchronously if base is missing or malformed — fail-loud beats
-// silent wrong-origin requests.
-const API_BASE = import.meta.env.VITE_RAG_API_URL;
-const RAG_ASK_URL = new URL('/api/rag/ask', API_BASE).toString();
+// LOAD-BEARING: build the endpoint from `apiBaseUrl` (the validated value
+// exported by msalConfig.js — placeholder + URL-parse checked at startup)
+// — NEVER use a relative `/api/rag/ask` path. In a typical Vite SPA the
+// frontend and backend are served from different origins, so a relative
+// URL would hit the frontend's static host (404) instead of the
+// orchestrator backend. Reading the raw `import.meta.env.VITE_RAG_API_URL`
+// here would bypass the validator; importing the validated constant keeps
+// the single source of truth.
+import { apiBaseUrl } from '../auth/msalConfig.js';
+const RAG_ASK_URL = new URL('/api/rag/ask', apiBaseUrl).toString();
 
 export async function callRagApi(payload) {
   // R8: getToken() failure must propagate. No silent catch-and-substitute
@@ -703,6 +703,12 @@ function isPlaceholder(value) {
 // at first request, after the app has already mounted and looked healthy.
 export const apiScope = import.meta.env.VITE_API_SCOPE;
 
+// Backend endpoint base URL — read AND validated here so a missing/placeholder
+// VITE_RAG_API_URL fails at the same config-error screen as the MSAL values.
+// Without this, a missing var would let the app mount and fail later with a
+// raw `new URL()` exception inside ragApi.js — confusing for operators.
+export const apiBaseUrl = import.meta.env.VITE_RAG_API_URL;
+
 export const msalConfig = {
   auth: {
     clientId: import.meta.env.VITE_MSAL_CLIENT_ID,
@@ -732,14 +738,22 @@ function validateConfigOrHalt() {
     ['authority', msalConfig.auth.authority],
     ['redirectUri', msalConfig.auth.redirectUri],
     ['apiScope', apiScope],            // VITE_API_SCOPE — fail-closed at startup
+    ['apiBaseUrl', apiBaseUrl],        // VITE_RAG_API_URL — fail-closed at startup
   ];
   const bad = checks.filter(([, v]) => isPlaceholder(v));
+  // Extra check for apiBaseUrl: must parse as a URL. A non-placeholder
+  // string that is not a valid URL still belongs in the config-error
+  // screen rather than failing later inside `new URL(path, base)` in
+  // ragApi.js. Skip if the placeholder check already caught it.
+  if (!bad.find(([k]) => k === 'apiBaseUrl')) {
+    try { new URL(apiBaseUrl); } catch { bad.push(['apiBaseUrl', apiBaseUrl]); }
+  }
   if (bad.length > 0) {
     const root = document.getElementById('app') || document.body;
     root.innerHTML = `
       <div role="alert" style="font-family:system-ui;padding:2rem;max-width:40rem;margin:4rem auto;border:1px solid #c00;border-radius:8px;">
         <h1 style="color:#c00;margin-top:0;">Authentication is not configured</h1>
-        <p>Required MSAL values are missing or contain placeholder text. Set <code>VITE_MSAL_CLIENT_ID</code>, <code>VITE_MSAL_AUTHORITY</code>, <code>VITE_MSAL_REDIRECT_URI</code>, and <code>VITE_API_SCOPE</code> in your environment, then redeploy.</p>
+        <p>Required values are missing, contain placeholder text, or are malformed. Set <code>VITE_MSAL_CLIENT_ID</code>, <code>VITE_MSAL_AUTHORITY</code>, <code>VITE_MSAL_REDIRECT_URI</code>, <code>VITE_API_SCOPE</code>, and <code>VITE_RAG_API_URL</code> in your environment, then redeploy. <code>VITE_RAG_API_URL</code> must parse as a URL (e.g. <code>https://api.example.com</code>).</p>
         <p>Contact your administrator if you do not have these values.</p>
       </div>
     `;
@@ -761,7 +775,15 @@ export const msalInstance = new PublicClientApplication(msalConfig);
 export async function getToken(scopes) {
   const accounts = msalInstance.getAllAccounts();
   if (accounts.length === 0) {
-    throw new Error('AUTH_NO_ACCOUNT');
+    // First-visit / cleared-session-storage case: there is no MSAL account
+    // yet. R8 says getToken() failures must surface via a recovery
+    // affordance, not a dead-end error. Kick off the standard sign-in
+    // redirect so the user is taken to Entra ID; control does not return
+    // (the browser navigates away). The throw is a belt-and-braces — if
+    // loginRedirect resolves without redirecting (offline, popup-blocker,
+    // disabled), ragApi.js still gets a typed error rather than `undefined`.
+    await msalInstance.loginRedirect({ scopes });
+    throw new Error('AUTH_REDIRECTING');
   }
   try {
     const result = await msalInstance.acquireTokenSilent({
