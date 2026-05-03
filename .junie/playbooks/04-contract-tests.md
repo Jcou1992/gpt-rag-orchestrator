@@ -835,12 +835,17 @@ function ensureInitialized() {
             // the bootstrap; if it succeeds, the user can click again to
             // proceed; if it fails, the same UI re-renders. No dead end.
             retry.addEventListener('click', () => {
-              // Fire-and-forget retry. The bootstrap's own try/catch
-              // re-renders this same recovery UI on failure — swallowing
-              // the rejection here is intentional, not a credential
-              // substitution.
+              // ROUND-42 closure: drive a REAL recovery, not just resolve
+              // ensureInitialized. After a successful re-bootstrap, reload
+              // the page so MSAL's normal flow runs from a clean state
+              // (initialize → handleRedirectPromise → getAllAccounts →
+              // loginRedirect if needed). A reload is simpler and safer
+              // than calling loginRedirect here without scopes context.
+              // The bootstrap's own try/catch re-renders this recovery UI
+              // on continued failure — no dead end. Single-line chain so
+              // the auth-policy allow-anchor walk-back resolves cleanly.
               // <!-- auth-policy-allow:pb04-retry-noop-catch -->
-              ensureInitialized().catch(() => {});
+              ensureInitialized().then(() => window.location.reload()).catch(() => {});
             });
           }
         }
