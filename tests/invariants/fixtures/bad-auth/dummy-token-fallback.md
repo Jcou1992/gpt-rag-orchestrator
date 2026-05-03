@@ -173,4 +173,11 @@ let lsMl2 =
 const $ls = localStorage;
 let _privateLs = window.localStorage;
 const cache$store = globalThis.localStorage;
+
+// Object-literal + property-assign aliasing (round-55 closure).
+const holder = { ls: localStorage };
+const wrapper = { storage: window.localStorage };
+holder.ls = localStorage;
+this.storage = localStorage;
+state.localCache = globalThis.localStorage;
 ```
